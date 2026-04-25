@@ -5,93 +5,45 @@ import fetch from 'node-fetch';
 
 const app = express().use(bodyParser.json());
 
+// الإعدادات من بيئة Render
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
-const geminiSessions = {};
+// --- فئة Gemini بذكاء 2.0 ---
+class GeminiAPI {
+  constructor() {
+    this.baseUrl = "https://us-central1-infinite-chain-295909.cloudfunctions.net/gemini-proxy-staging-v1";
+    this.headers = { "content-type": "application/json" };
+  }
 
-const gemini = {
-    getNewCookie: async function () {
-        const r = await fetch("https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=maGuAc&source-path=%2F&bl=boq_assistant-bard-web-server_20250814.06_p1&f.sid=-7816331052118000090&hl=en-US&_reqid=173780&rt=c", {
-            "headers": { "content-type": "application/x-www-form-urlencoded;charset=UTF-8" },
-            "body": "f.req=%5B%5B%5B%22maGuAc%22%2C%22%5B0%5D%22%2Cnull%2C%22generic%22%5D%5D%5D&",
-            "method": "POST"
-        });
-        const cookieHeader = r.headers.get('set-cookie');
-        if (!cookieHeader) return null;
-        return cookieHeader.split(';')[0];
-    },
+  async chat({ prompt }) {
+    // إجبار البوت على العربية الفصحى وذكر المطور ويزي
+    const identity = "أجب باللغة العربية الفصحى فقط وبأسلوب راقٍ. أنت بوت ذكي تم تطويرك وبرمجتك بواسطة 'المطور ويزي' (Wizzy). في بداية حديثك أو خلاله، أكد دائماً على هويتك ومطورك.";
+    const parts = [{ text: `${identity}\n\nالمستخدم يقول: ${prompt}` }];
 
-    ask: async function (prompt, previousId = null) {
-        let resumeArray = null;
-        let cookie = null;
-
-        if (previousId) {
-            try {
-                const j = JSON.parse(Buffer.from(previousId, 'base64').toString());
-                resumeArray = j.newResumeArray;
-                cookie = j.cookie;
-            } catch (e) { previousId = null; }
-        }
-        
-        const headers = {
-            "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "cookie": cookie || await this.getNewCookie() || ""
-        };
-
-        const b = [[prompt], ["en-US"], resumeArray];
-        const a = [null, JSON.stringify(b)];
-        const body = new URLSearchParams({ "f.req": JSON.stringify(a) });
-        
-        const response = await fetch(`https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate?bl=boq_assistant-bard-web-server_20250729.06_p0&f.sid=4206607810970164620&hl=en-US&_reqid=2813378&rt=c`, {
-            headers, body, method: 'post'
-        });
-
-        const data = await response.text();
-        const match = data.matchAll(/^\d+\n(.+?)\n/gm);
-        const chunks = Array.from(match, m => m[1]);
-        
-        let text, newResumeArray;
-        let found = false;
-
-        // تعديل منطق الـ Parsing ليكون أكثر ذكاءً
-        for (const chunk of chunks.reverse()) {
-            try {
-                const realArray = JSON.parse(chunk);
-                // بنحاول نلقى النص في أكتر من مكان محتمل
-                const parse1 = JSON.parse(realArray[0][2]);
-                
-                if (parse1) {
-                    // تفقد المسار التقليدي للرد
-                    if (parse1[4] && parse1[4][0] && parse1[4][0][1]) {
-                        text = parse1[4][0][1][0];
-                        newResumeArray = [...parse1[1], parse1[4][0][0]];
-                        found = true;
-                        break;
-                    } 
-                    // مسار بديل في حالة تغيير جوجل للرد
-                    else if (parse1[0] && typeof parse1[0] === 'string') {
-                        text = parse1[0];
-                        found = true;
-                        break;
-                    }
-                }
-            } catch (e) { continue; }
-        }
-
-        if (!found) throw new Error("Google changed response format");
-        
-        const id = Buffer.from(JSON.stringify({ newResumeArray, cookie: headers.cookie })).toString('base64');
-        return { text: text.replace(/\*\*(.+?)\*\*/g, "$1"), id };
+    try {
+      const response = await axios.post(this.baseUrl, { contents: [{ parts }] }, { headers: this.headers });
+      return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "عذراً، لم أستطع معالجة الرد حالياً.";
+    } catch (error) {
+      console.error("Gemini Error:", error.message);
+      return "عذراً يا فضل، حدث خطأ في الاتصال بمحرك الذكاء الاصطناعي.";
     }
-};
+  }
+}
 
+const gemini = new GeminiAPI();
+
+// --- مسار للحفاظ على نشاط السيرفر 24 ساعة (Uptime) ---
+app.get('/', (req, res) => res.send('Wizzy Bot is Alive! 🚀'));
+
+// --- التحقق من Webhook فيسبوك ---
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
     } else { res.sendStatus(403); }
 });
 
+// --- معالجة الرسائل الواردة ---
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
@@ -100,19 +52,23 @@ app.post('/webhook', async (req, res) => {
                 let event = entry.messaging[0];
                 let sender_id = event.sender.id;
 
+                // 1. التعامل مع الرسائل النصية
                 if (event.message && event.message.text) {
-                    const userMsg = event.message.text;
-                    console.log(`📩 رسالة من: ${sender_id} -> ${userMsg}`);
-                    
-                    try {
-                        // طلب الرد من السكريب
-                        const result = await gemini.ask(`رد باللهجة السودانية: ${userMsg}`, geminiSessions[sender_id]);
-                        geminiSessions[sender_id] = result.id;
+                    const msg = event.message.text;
 
-                        await sendToMessenger(sender_id, result.text);
-                    } catch (err) {
-                        console.error("❌ Gemini Error:", err.message);
-                        await sendToMessenger(sender_id, "يا حبيبنا، في زحمة في سيرفرات جوجل، جرب ترسل تاني هسي.");
+                    if (msg === "قائمة" || msg === "menu") {
+                        await sendMenu(sender_id);
+                    } else {
+                        const aiResponse = await gemini.chat({ prompt: msg });
+                        await sendText(sender_id, aiResponse);
+                    }
+                }
+
+                // 2. التعامل مع ضغطات الأزرار (Postbacks)
+                if (event.postback) {
+                    const payload = event.postback.payload;
+                    if (payload === 'DEV_INFO') {
+                        await sendText(sender_id, "تم تطوير هذا البوت بواسطة 'المطور ويزي' (Wizzy). مبرمج متخصص في حلول الذكاء الاصطناعي.");
                     }
                 }
             }
@@ -121,16 +77,36 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-async function sendToMessenger(psid, text) {
-    try {
-        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-            recipient: { id: psid },
-            message: { text: text }
-        });
-        console.log("🚀 تم إرسال الرد بنجاح");
-    } catch (err) {
-        console.error("❌ FB Error:", err.message);
-    }
+// --- وظائف الإرسال (Send Helpers) ---
+
+// إرسال نص بسيط
+async function sendText(psid, text) {
+    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+        recipient: { id: psid },
+        message: { text: text }
+    });
 }
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 البوت شغال يا ويزي.. جرب هسي!"));
+// إرسال قائمة أزرار احترافية
+async function sendMenu(psid) {
+    const data = {
+        recipient: { id: psid },
+        message: {
+            attachment: {
+                type: "template",
+                payload: {
+                    template_type: "button",
+                    text: "مرحباً بك في لوحة تحكم بوت ويزي المتطور. كيف يمكنني مساعدتك؟",
+                    buttons: [
+                        { type: "postback", title: "من هو المطور؟", payload: "DEV_INFO" },
+                        { type: "web_url", url: "https://t.me/Wizzy_Official", title: "قناة التلجرام" }
+                    ]
+                }
+            }
+        }
+    };
+    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, data);
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 بوت ويزي الاحترافي يعمل على بورت ${PORT}`));
