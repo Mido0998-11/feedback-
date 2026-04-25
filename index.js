@@ -5,13 +5,13 @@ import fetch from 'node-fetch';
 
 const app = express().use(bodyParser.json());
 
-// المفاتيح من Render
+// المفاتيح من إعدادات ريندر
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
 const geminiSessions = {}; // لحفظ سياق المحادثة
 
-// --- منطق Gemini الخاص بك (Wolep Plugin) ---
+// --- منطق Gemini Scraper (كود ويزي الأصلي) ---
 const gemini = {
     getNewCookie: async function () {
         const r = await fetch("https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=maGuAc&source-path=%2F&bl=boq_assistant-bard-web-server_20250814.06_p1&f.sid=-7816331052118000090&hl=en-US&_reqid=173780&rt=c", {
@@ -20,13 +20,14 @@ const gemini = {
             "method": "POST"
         });
         const cookieHeader = r.headers.get('set-cookie');
-        if (!cookieHeader) throw new Error('Cookie fail');
+        if (!cookieHeader) throw new Error('Cookie retrieval failed');
         return cookieHeader.split(';')[0];
     },
 
     ask: async function (prompt, previousId = null) {
         let resumeArray = null;
         let cookie = null;
+
         if (previousId) {
             try {
                 const j = JSON.parse(Buffer.from(previousId, 'base64').toString());
@@ -64,13 +65,13 @@ const gemini = {
                 }
             } catch (e) {}
         }
-        if (!found) throw new Error("Parsing error");
+        if (!found) throw new Error("Could not parse Gemini response");
         const id = Buffer.from(JSON.stringify({ newResumeArray, cookie: headers.cookie })).toString('base64');
         return { text, id };
     }
 };
 
-// --- إعدادات فيسبوك ---
+// --- إعدادات Webhook فيسبوك ---
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
@@ -81,22 +82,25 @@ app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
         for (let entry of body.entry) {
-            let event = entry.messaging[0];
-            let sender_psid = event.sender.id;
+            if (entry.messaging && entry.messaging[0]) {
+                let event = entry.messaging[0];
+                let sender_id = event.sender.id;
 
-            if (event.message && event.message.text) {
-                console.log(`📩 رسالة مستلمة: ${event.message.text}`);
-                try {
-                    // استخدام منطق Gemini بتاعك
-                    const previousId = geminiSessions[sender_psid];
-                    // أضفنا لهجة سودانية للبرومبت
-                    const result = await gemini.ask(`رد باللهجة السودانية كبوت ذكي: ${event.message.text}`, previousId);
-                    geminiSessions[sender_psid] = result.id;
+                if (event.message && event.message.text) {
+                    const userMsg = event.message.text;
+                    console.log(`📩 رسالة من المستخدم: ${userMsg}`);
+                    
+                    try {
+                        const previousId = geminiSessions[sender_id];
+                        // طلب الرد من Gemini Scraper
+                        const result = await gemini.ask(`رد باللهجة السودانية كبوت ذكي ولطيف: ${userMsg}`, previousId);
+                        geminiSessions[sender_id] = result.id;
 
-                    await sendToMessenger(sender_psid, result.text);
-                } catch (e) {
-                    console.error("❌ Error:", e.message);
-                    await sendToMessenger(sender_psid, "معليش يا حبيب، في مشكلة فنية، جرب تاني.");
+                        await sendToMessenger(sender_id, result.text);
+                    } catch (err) {
+                        console.error("❌ Gemini Error:", err.message);
+                        await sendToMessenger(sender_id, "يا غالي في مشكلة تقنية بسيطة، جرب ترسل تاني.");
+                    }
                 }
             }
         }
@@ -105,10 +109,15 @@ app.post('/webhook', async (req, res) => {
 });
 
 async function sendToMessenger(psid, text) {
-    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-        recipient: { id: psid },
-        message: { text: text }
-    });
+    try {
+        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+            recipient: { id: psid },
+            message: { text: text }
+        });
+        console.log("🚀 تم إرسال الرد بنجاح");
+    } catch (err) {
+        console.error("❌ FB Error:", err.message);
+    }
 }
 
-app.listen(process.env.PORT || 3000, () => console.log('🚀 السيرفر شغال بكود ويزي!'));
+app.listen(process.env.PORT || 3000, () => console.log("🚀 السيرفر شغال بنظام ES Modules وكود ويزي!"));
