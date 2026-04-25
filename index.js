@@ -5,13 +5,11 @@ import fetch from 'node-fetch';
 
 const app = express().use(bodyParser.json());
 
-// المفاتيح من إعدادات ريندر
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
-const geminiSessions = {}; // لحفظ سياق المحادثة
+const geminiSessions = {};
 
-// --- منطق Gemini Scraper (كود ويزي الأصلي) ---
 const gemini = {
     getNewCookie: async function () {
         const r = await fetch("https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=maGuAc&source-path=%2F&bl=boq_assistant-bard-web-server_20250814.06_p1&f.sid=-7816331052118000090&hl=en-US&_reqid=173780&rt=c", {
@@ -20,7 +18,7 @@ const gemini = {
             "method": "POST"
         });
         const cookieHeader = r.headers.get('set-cookie');
-        if (!cookieHeader) throw new Error('Cookie retrieval failed');
+        if (!cookieHeader) return null;
         return cookieHeader.split(';')[0];
     },
 
@@ -38,7 +36,7 @@ const gemini = {
         
         const headers = {
             "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "cookie": cookie || await this.getNewCookie()
+            "cookie": cookie || await this.getNewCookie() || ""
         };
 
         const b = [[prompt], ["en-US"], resumeArray];
@@ -52,26 +50,42 @@ const gemini = {
         const data = await response.text();
         const match = data.matchAll(/^\d+\n(.+?)\n/gm);
         const chunks = Array.from(match, m => m[1]);
-        let text, newResumeArray, found = false;
+        
+        let text, newResumeArray;
+        let found = false;
 
+        // تعديل منطق الـ Parsing ليكون أكثر ذكاءً
         for (const chunk of chunks.reverse()) {
             try {
                 const realArray = JSON.parse(chunk);
+                // بنحاول نلقى النص في أكتر من مكان محتمل
                 const parse1 = JSON.parse(realArray[0][2]);
-                if (parse1 && parse1[4] && parse1[4][0]) {
-                    newResumeArray = [...parse1[1], parse1[4][0][0]];
-                    text = parse1[4][0][1][0];
-                    found = true; break;
+                
+                if (parse1) {
+                    // تفقد المسار التقليدي للرد
+                    if (parse1[4] && parse1[4][0] && parse1[4][0][1]) {
+                        text = parse1[4][0][1][0];
+                        newResumeArray = [...parse1[1], parse1[4][0][0]];
+                        found = true;
+                        break;
+                    } 
+                    // مسار بديل في حالة تغيير جوجل للرد
+                    else if (parse1[0] && typeof parse1[0] === 'string') {
+                        text = parse1[0];
+                        found = true;
+                        break;
+                    }
                 }
-            } catch (e) {}
+            } catch (e) { continue; }
         }
-        if (!found) throw new Error("Could not parse Gemini response");
+
+        if (!found) throw new Error("Google changed response format");
+        
         const id = Buffer.from(JSON.stringify({ newResumeArray, cookie: headers.cookie })).toString('base64');
-        return { text, id };
+        return { text: text.replace(/\*\*(.+?)\*\*/g, "$1"), id };
     }
 };
 
-// --- إعدادات Webhook فيسبوك ---
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
@@ -88,18 +102,17 @@ app.post('/webhook', async (req, res) => {
 
                 if (event.message && event.message.text) {
                     const userMsg = event.message.text;
-                    console.log(`📩 رسالة من المستخدم: ${userMsg}`);
+                    console.log(`📩 رسالة من: ${sender_id} -> ${userMsg}`);
                     
                     try {
-                        const previousId = geminiSessions[sender_id];
-                        // طلب الرد من Gemini Scraper
-                        const result = await gemini.ask(`رد باللهجة السودانية كبوت ذكي ولطيف: ${userMsg}`, previousId);
+                        // طلب الرد من السكريب
+                        const result = await gemini.ask(`رد باللهجة السودانية: ${userMsg}`, geminiSessions[sender_id]);
                         geminiSessions[sender_id] = result.id;
 
                         await sendToMessenger(sender_id, result.text);
                     } catch (err) {
                         console.error("❌ Gemini Error:", err.message);
-                        await sendToMessenger(sender_id, "يا غالي في مشكلة تقنية بسيطة، جرب ترسل تاني.");
+                        await sendToMessenger(sender_id, "يا حبيبنا، في زحمة في سيرفرات جوجل، جرب ترسل تاني هسي.");
                     }
                 }
             }
@@ -120,4 +133,4 @@ async function sendToMessenger(psid, text) {
     }
 }
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 السيرفر شغال بنظام ES Modules وكود ويزي!"));
+app.listen(process.env.PORT || 3000, () => console.log("🚀 البوت شغال يا ويزي.. جرب هسي!"));
