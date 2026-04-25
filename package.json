@@ -1,13 +1,13 @@
 {
   "name": "wizzy-ai-bot",
-  "version": "1.0.0",
-  "description": "Facebook Messenger AI Bot using Gemini",
+  "version": "1.1.0",
+  "description": "Facebook Messenger AI Bot using Gemini 1.5",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.11.4",
+    "@google/generative-ai": "latest",
     "axios": "^1.6.8",
     "body-parser": "^1.20.2",
     "express": "^4.19.2"
