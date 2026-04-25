@@ -1,7 +1,7 @@
 {
   "name": "wizzy-ai-bot",
-  "version": "1.2.0",
-  "description": "Facebook Messenger AI Bot - Stable Version",
+  "version": "1.3.0",
+  "description": "Facebook Messenger AI Bot using Gemini 1.5 - Stable Version",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
