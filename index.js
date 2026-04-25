@@ -1,49 +1,27 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import axios from 'axios';
-import fetch from 'node-fetch';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express().use(bodyParser.json());
 
-// الإعدادات من بيئة Render
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // تأكد من وضع المفتاح في ريندر
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
-// --- فئة Gemini بذكاء 2.0 ---
-class GeminiAPI {
-  constructor() {
-    this.baseUrl = "https://us-central1-infinite-chain-295909.cloudfunctions.net/gemini-proxy-staging-v1";
-    this.headers = { "content-type": "application/json" };
-  }
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+// نستخدم موديل 1.5 Flash لأنه الأسرع والأفضل للبوتات
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    systemInstruction: "أنت مساعد ذكي ولطيف، أجب باللغة العربية الفصحى فقط. يجب أن تذكر دائماً أنك بوت مطور بواسطة 'المطور ويزي' (Wizzy)."
+});
 
-  async chat({ prompt }) {
-    // إجبار البوت على العربية الفصحى وذكر المطور ويزي
-    const identity = "أجب باللغة العربية الفصحى فقط وبأسلوب راقٍ. أنت بوت ذكي تم تطويرك وبرمجتك بواسطة 'المطور ويزي' (Wizzy). في بداية حديثك أو خلاله، أكد دائماً على هويتك ومطورك.";
-    const parts = [{ text: `${identity}\n\nالمستخدم يقول: ${prompt}` }];
-
-    try {
-      const response = await axios.post(this.baseUrl, { contents: [{ parts }] }, { headers: this.headers });
-      return response.data?.candidates?.[0]?.content?.parts?.[0]?.text || "عذراً، لم أستطع معالجة الرد حالياً.";
-    } catch (error) {
-      console.error("Gemini Error:", error.message);
-      return "عذراً يا فضل، حدث خطأ في الاتصال بمحرك الذكاء الاصطناعي.";
-    }
-  }
-}
-
-const gemini = new GeminiAPI();
-
-// --- مسار للحفاظ على نشاط السيرفر 24 ساعة (Uptime) ---
-app.get('/', (req, res) => res.send('Wizzy Bot is Alive! 🚀'));
-
-// --- التحقق من Webhook فيسبوك ---
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
     } else { res.sendStatus(403); }
 });
 
-// --- معالجة الرسائل الواردة ---
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
@@ -52,23 +30,21 @@ app.post('/webhook', async (req, res) => {
                 let event = entry.messaging[0];
                 let sender_id = event.sender.id;
 
-                // 1. التعامل مع الرسائل النصية
                 if (event.message && event.message.text) {
-                    const msg = event.message.text;
-
-                    if (msg === "قائمة" || msg === "menu") {
+                    const text = event.message.text;
+                    console.log(`📩 رسالة من ${sender_id}: ${text}`);
+                    
+                    if (text === "قائمة" || text === "menu") {
                         await sendMenu(sender_id);
                     } else {
-                        const aiResponse = await gemini.chat({ prompt: msg });
-                        await sendText(sender_id, aiResponse);
-                    }
-                }
-
-                // 2. التعامل مع ضغطات الأزرار (Postbacks)
-                if (event.postback) {
-                    const payload = event.postback.payload;
-                    if (payload === 'DEV_INFO') {
-                        await sendText(sender_id, "تم تطوير هذا البوت بواسطة 'المطور ويزي' (Wizzy). مبرمج متخصص في حلول الذكاء الاصطناعي.");
+                        try {
+                            const result = await model.generateContent(text);
+                            const aiReply = result.response.text();
+                            await sendText(sender_id, aiReply);
+                        } catch (err) {
+                            console.error("❌ Gemini API Error:", err.message);
+                            await sendText(sender_id, "عذراً، المحرك يحتاج لمفتاح API صحيح.");
+                        }
                     }
                 }
             }
@@ -77,17 +53,14 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// --- وظائف الإرسال (Send Helpers) ---
-
-// إرسال نص بسيط
 async function sendText(psid, text) {
     await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
         recipient: { id: psid },
         message: { text: text }
     });
+    console.log("🚀 تم الرد بنجاح");
 }
 
-// إرسال قائمة أزرار احترافية
 async function sendMenu(psid) {
     const data = {
         recipient: { id: psid },
@@ -96,10 +69,10 @@ async function sendMenu(psid) {
                 type: "template",
                 payload: {
                     template_type: "button",
-                    text: "مرحباً بك في لوحة تحكم بوت ويزي المتطور. كيف يمكنني مساعدتك؟",
+                    text: "مرحباً بك! أنا بوت ذكي من تطوير ويزي. اختر أحد الخيارات:",
                     buttons: [
-                        { type: "postback", title: "من هو المطور؟", payload: "DEV_INFO" },
-                        { type: "web_url", url: "https://t.me/Wizzy_Official", title: "قناة التلجرام" }
+                        { type: "web_url", url: "https://t.me/Wizzy_Official", title: "قناتنا على تلجرام" },
+                        { type: "postback", title: "معلومات المطور", payload: "DEV_INFO" }
                     ]
                 }
             }
@@ -108,5 +81,4 @@ async function sendMenu(psid) {
     await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, data);
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 بوت ويزي الاحترافي يعمل على بورت ${PORT}`));
+app.listen(process.env.PORT || 3000, () => console.log("🚀 البوت الرسمي شغال 24 ساعة!"));
