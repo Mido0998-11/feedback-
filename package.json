@@ -1,13 +1,10 @@
 {
-  "name": "wizzy-ai-openai",
-  "version": "4.0.0",
+  "name": "wizzy-gemini-bot",
+  "version": "5.0.0",
   "type": "module",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "openai": "^4.28.0",
+    "@google/generative-ai": "^0.21.0",
     "axios": "^1.6.8",
     "express": "^4.19.2",
     "body-parser": "^1.20.2"
