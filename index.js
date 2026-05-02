@@ -1,24 +1,56 @@
-import express from 'express'; // تم التصحيح حرف i صغير
+import express from 'express';
 import bodyParser from 'body-parser';
 import axios from 'axios';
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express().use(bodyParser.json());
 
+// الإعدادات من Render
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
-if (!GEMINI_API_KEY) {
-    console.error("❌ خطأ: GEMINI_API_KEY مفقود في إعدادات ريندر!");
+// ذاكرة البوت (لحفظ سياق المحادثة)
+const userMemory = new Map();
+
+// --- دالة الاتصال بـ Pollinations AI ---
+async function getPollinationsResponse(senderId, userMessage) {
+    let history = userMemory.get(senderId) || [];
+
+    const systemPrompt = { 
+        role: 'system', 
+        content: 'أنت مساعد ذكي ولطيف، أجب باللغة العربية الفصحى دائماً. أنت "بوت ويزي" المطور بواسطة المبرمج المبدع ويزي (Wizzy). كن محترفاً وفخوراً بهويتك.' 
+    };
+
+    const messages = [
+        systemPrompt,
+        ...history.slice(-10), // نأخذ آخر 10 رسائل فقط للحفاظ على السرعة
+        { role: 'user', content: userMessage }
+    ];
+
+    try {
+        const res = await axios.post('https://text.pollinations.ai/v1/chat/completions', {
+            model: 'openai', // سيستخدم gpt-4o-mini تلقائياً
+            messages: messages,
+            temperature: 0.7
+        });
+
+        const reply = res.data.choices[0].message.content;
+
+        // تحديث الذاكرة
+        history.push({ role: 'user', content: userMessage });
+        history.push({ role: 'assistant', content: reply });
+        if (history.length > 20) history = history.slice(-20);
+        userMemory.set(senderId, history);
+
+        return reply;
+    } catch (err) {
+        console.error("❌ Pollinations Error:", err.message);
+        return "عذراً، المحرك مشغول حالياً، حاول مرة أخرى.";
+    }
 }
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// --- مسارات الفيسبوك ---
 
-const systemPrompt = "أنت مساعد ذكي ولطيف، أجب باللغة العربية الفصحى دائماً. أنت 'بوت ويزي' المطور بواسطة المبرمج المبدع ويزي (Wizzy).";
-
-app.get('/', (req, res) => res.send('Wizzy Bot is Online! 🚀'));
+app.get('/', (req, res) => res.send('Wizzy FB Bot (Pollinations) is Online! 🚀'));
 
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
@@ -36,25 +68,14 @@ app.post('/webhook', async (req, res) => {
 
                 if (event.message && event.message.text) {
                     const text = event.message.text;
-                    console.log(`📩 رسالة مستلمة: ${text}`);
-                    
-                    try {
-                        const fullPrompt = `${systemPrompt}\n\nالمستخدم يسأل: ${text}`;
-                        const result = await model.generateContent(fullPrompt);
-                        const aiReply = result.response.text();
-                        
-                        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                            recipient: { id: sender_id },
-                            message: { text: aiReply }
-                        });
-                        console.log("🚀 تم الرد بنجاح");
-                    } catch (err) {
-                        console.error("❌ API Error:", err.message);
-                        // إذا ظهر خطأ 404 هنا، فالمشكلة في المكتبة ولازم نستخدم كود الـ axios المباشر
-                        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                            recipient: { id: sender_id },
-                            message: { text: "عذراً يا عزيزي، واجهت مشكلة بسيطة، جارٍ إصلاحها بواسطة ويزي." }
-                        });
+                    console.log(`📩 رسالة من ${sender_id}: ${text}`);
+
+                    if (text.toLowerCase() === 'مسح') {
+                        userMemory.delete(sender_id);
+                        await sendToMessenger(sender_id, "🗑️ تم مسح الذاكرة بنجاح يا بطل.");
+                    } else {
+                        const aiReply = await getPollinationsResponse(sender_id, text);
+                        await sendToMessenger(sender_id, aiReply);
                     }
                 }
             }
@@ -63,5 +84,11 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 بوت ويزي انطلق على بورت ${PORT}`));
+async function sendToMessenger(psid, text) {
+    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+        recipient: { id: psid },
+        message: { text: text }
+    });
+}
+
+app.listen(process.env.PORT || 3000, () => console.log("🚀 بوت ويزي (Pollinations) انطلق!"));
