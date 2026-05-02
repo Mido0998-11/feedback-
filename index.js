@@ -1,28 +1,30 @@
 import express from 'express';
 import bodyParser from 'body-parser';
 import axios from 'axios';
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from 'openai';
 
 const app = express().use(bodyParser.json());
 
+// الإعدادات المسحوبة من بيئة Render
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY; 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-// إعداد الموديل بالهوية الرسمية (عربية فصحى + المطور ويزي)
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    systemInstruction: "أجب باللغة العربية الفصحى فقط وبأسلوب احترافي. أنت مساعد ذكي تم تطويرك وبرمجتك بواسطة المطور ويزي (Wizzy). عرّف بنفسك دائماً عند السؤال."
+const openai = new OpenAI({
+    apiKey: OPENAI_API_KEY,
 });
 
+// مسار للحفاظ على نشاط السيرفر (Uptime) ليعمل 24 ساعة
+app.get('/', (req, res) => res.send('Wizzy OpenAI Bot is Online and Ready! 🚀'));
+
+// التحقق من Webhook فيسبوك (عند الربط لأول مرة)
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
     } else { res.sendStatus(403); }
 });
 
+// معالجة الرسائل الواردة من المتابعين
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
@@ -32,17 +34,34 @@ app.post('/webhook', async (req, res) => {
                 let sender_id = event.sender.id;
 
                 if (event.message && event.message.text) {
-                    const text = event.message.text;
-                    console.log(`📩 رسالة من المتابع: ${text}`);
-                    
-                    try {
-                        const result = await model.generateContent(text);
-                        const aiReply = result.response.text();
-                        await sendToMessenger(sender_id, aiReply);
-                    } catch (err) {
-                        console.error("❌ Gemini API Error:", err.message);
-                        await sendToMessenger(sender_id, "عذراً، أنا تحت التحديث الآن، المطور ويزي يعمل على صيانتي.");
+                    const msg = event.message.text;
+                    console.log(`📩 رسالة مستلمة: ${msg}`);
+
+                    // الرد بنظام الأزرار إذا طلب المستخدم "قائمة"
+                    if (msg === "قائمة" || msg === "menu") {
+                        await sendMenu(sender_id);
+                    } else {
+                        try {
+                            const response = await openai.chat.completions.create({
+                                model: "gpt-3.5-turbo",
+                                messages: [
+                                    { role: "system", content: "أجب باللغة العربية الفصحى فقط وبأسلوب ذكي. أنت 'بوت ويزي' المطور والمدعوم من قبل المبرمج المبدع ويزي (Wizzy). أكد دائماً على هويتك عند السؤال." },
+                                    { role: "user", content: msg }
+                                ],
+                            });
+
+                            const aiReply = response.choices[0].message.content;
+                            await sendText(sender_id, aiReply);
+                        } catch (err) {
+                            console.error("❌ OpenAI Error:", err.message);
+                            await sendText(sender_id, "عذراً يا عزيزي، أنا الآن في مرحلة تحديث الأنظمة تحت إشراف المطور ويزي.");
+                        }
                     }
+                }
+
+                // معالجة ضغطات الأزرار
+                if (event.postback && event.postback.payload === 'DEV_INFO') {
+                    await sendText(sender_id, "أنا بوت ذكي تم تطويري وبرمجتي بالكامل بواسطة المطور المبدع ويزي (Wizzy).");
                 }
             }
         }
@@ -50,16 +69,35 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-async function sendToMessenger(psid, text) {
-    try {
-        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-            recipient: { id: psid },
-            message: { text: text }
-        });
-        console.log("🚀 تم إرسال الرد الرسمي بنجاح");
-    } catch (err) {
-        console.error("❌ FB Error:", err.message);
-    }
+// وظيفة إرسال النصوص
+async function sendText(psid, text) {
+    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+        recipient: { id: psid },
+        message: { text: text }
+    });
+    console.log("🚀 تم إرسال الرد بنجاح");
 }
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 بوت ويزي الرسمي شغال بذكاء خارق!"));
+// وظيفة إرسال الأزرار الاحترافية
+async function sendMenu(psid) {
+    const data = {
+        recipient: { id: psid },
+        message: {
+            attachment: {
+                type: "template",
+                payload: {
+                    template_type: "button",
+                    text: "أهلاً بك في عالم ويزي للذكاء الاصطناعي. كيف يمكنني خدمتك اليوم؟",
+                    buttons: [
+                        { type: "postback", title: "معلومات المطور", payload: "DEV_INFO" },
+                        { type: "web_url", url: "https://t.me/Wizzy_Official", title: "قناتنا الرسمية" }
+                    ]
+                }
+            }
+        }
+    };
+    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, data);
+}
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 بوت ويزي (OpenAI) يعمل الآن بامتياز!`));
