@@ -1,6 +1,6 @@
 {
-  "name": "coku-pro-ultra",
-  "version": "5.0.0",
+  "name": "coku-ai-vision",
+  "version": "1.0.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
