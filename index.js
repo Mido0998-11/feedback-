@@ -1,4 +1,4 @@
-import express from 'express';
+import express from 'express'; // تم تصحيح حرف i
 import bodyParser from 'body-parser';
 import axios from 'axios';
 import { GoogleGenerativeAI } from "@google/generative-ai";
@@ -9,23 +9,26 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY; 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
 
+// التحقق من وجود المفتاح لتجنب توقف السيرفر
+if (!GEMINI_API_KEY) {
+    console.error("❌ خطأ: GEMINI_API_KEY مفقود في إعدادات ريندر!");
+}
+
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ 
-    model: "gemini-1.5-flash",
-    systemInstruction: "أنت مساعد ذكي ولطيف، أجب باللغة العربية الفصحى دائماً. أنت 'بوت ويزي' المطور بواسطة المبرمج المبدع ويزي (Wizzy). كن محترفاً وفخوراً بهويتك."
-});
 
-// مسار للحفاظ على النشاط (Uptime)
-app.get('/', (req, res) => res.send('Wizzy Gemini Bot is Online! 🚀'));
+// تعريف الموديل (تم تبسيطه لتفادي خطأ v1beta)
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Webhook Verification
+const systemPrompt = "أنت مساعد ذكي ولطيف، أجب باللغة العربية الفصحى دائماً. أنت 'بوت ويزي' المطور بواسطة المبرمج المبدع ويزي (Wizzy).";
+
+app.get('/', (req, res) => res.send('Wizzy Bot is Online! 🚀'));
+
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
         res.status(200).send(req.query['hub.challenge']);
     } else { res.sendStatus(403); }
 });
 
-// Message Handling
 app.post('/webhook', async (req, res) => {
     const body = req.body;
     if (body.object === 'page') {
@@ -39,8 +42,11 @@ app.post('/webhook', async (req, res) => {
                     console.log(`📩 رسالة مستلمة: ${text}`);
                     
                     try {
-                        const result = await model.generateContent(text);
+                        // دمج تعليمات النظام مع سؤال المستخدم لضمان الشخصية
+                        const fullPrompt = `${systemPrompt}\n\nالمستخدم يسأل: ${text}`;
+                        const result = await model.generateContent(fullPrompt);
                         const aiReply = result.response.text();
+                        
                         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
                             recipient: { id: sender_id },
                             message: { text: aiReply }
@@ -48,6 +54,11 @@ app.post('/webhook', async (req, res) => {
                         console.log("🚀 تم الرد بنجاح");
                     } catch (err) {
                         console.error("❌ API Error:", err.message);
+                        // رد احتياطي في حالة الخطأ
+                        await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+                            recipient: { id: sender_id },
+                            message: { text: "عذراً يا عزيزي، واجهت مشكلة بسيطة في معالجة طلبك." }
+                        });
                     }
                 }
             }
@@ -56,4 +67,5 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.listen(process.env.PORT || 3000, () => console.log("🚀 بوت ويزي الرسمي انطلق!"));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 بوت ويزي انطلق على بورت ${PORT}`));
