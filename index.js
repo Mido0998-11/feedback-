@@ -4,30 +4,31 @@ import axios from 'axios';
 
 const app = express().use(bodyParser.json());
 
-// الإعدادات من Environment Variables
+// الإعدادات (تأكد من وجودها في Vercel Environment Variables)
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'Wizzy_AI_2026';
-const ADMIN_ID = "35102646592711868"; // معرف الأدمن
+const ADMIN_ID = "35102646592711868"; 
 
-// --- 1. وظيفة إرسال تفاعل الإيموجي (Reaction) ---
-async function sendReaction(psid, messageId, reactionType = "love") {
+// --- 1. وظيفة التفاعل (Reaction) ---
+async function sendReaction(psid, messageId, type = "love") {
     try {
         await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
             recipient: { id: psid },
             sender_action: "react",
-            payload: {
-                message_id: messageId,
-                reaction: reactionType // أنواع: love, smile, wow, sad, angry, like, dislike
-            }
+            payload: { message_id: messageId, reaction: type }
         });
-    } catch (e) { console.error("Reaction Error"); }
+    } catch (e) {}
 }
 
-// --- 2. محرك Coku الذكي (صور + بحث + شخصية) ---
+// --- 2. محرك Coku المطور (حل مشكلة انشغال المحرك) ---
 async function getCokuResponse(senderId, userMessage, imageUrl = null) {
     const isAdmin = senderId === ADMIN_ID;
-    let contents = [{ type: "text", text: userMessage }];
-    if (imageUrl) contents.push({ type: "image_url", image_url: { url: imageUrl } });
+    
+    // تنسيق الطلب ليكون أكثر استقراراً
+    let prompt = userMessage;
+    if (imageUrl) {
+        prompt = `أمامك صورة في هذا الرابط: ${imageUrl}. حللها بدقة وأجب على هذا السؤال: ${userMessage || "ماذا ترى في الصورة؟"}`;
+    }
 
     try {
         const res = await axios.post('https://text.pollinations.ai/v1/chat/completions', {
@@ -35,16 +36,21 @@ async function getCokuResponse(senderId, userMessage, imageUrl = null) {
             messages: [
                 { 
                     role: 'system', 
-                    content: `أنت Coku، مساعد ذكي ومرح جداً بالفصحى، مطور بواسطة المبرمج العبقري ويزي (Wizzy). يمكنك رؤية الصور وتحليلها بدقة والبحث في الإنترنت عن أحدث الأخبار والمعلومات. ${isAdmin ? "تحدث مع مطورك ويزي باحترام وفخر." : ""}` 
+                    content: `أنت Coku، مساعد ذكي ومرح جداً بالفصحى، مطور بواسطة المبرمج المبدع ويزي (Wizzy). يمكنك البحث في الإنترنت وتحليل الصور. أجب دائماً بأسلوب ذكي ومختصر. ${isAdmin ? "أنت الآن تتحدث مع مطورك ويزي، كن فخوراً به." : ""}` 
                 },
-                { role: 'user', content: contents }
-            ]
-        });
+                { role: 'user', content: prompt }
+            ],
+            seed: 42
+        }, { timeout: 25000 }); // زيادة المهلة لـ 25 ثانية لضمان البحث وتحليل الصور
+
         return res.data.choices[0].message.content;
-    } catch (e) { return "المحرك مشغول، أعد المحاولة يا بطل!"; }
+    } catch (e) {
+        console.error("AI Error:", e.message);
+        return "يبدو أنني أستغرق وقتاً طويلاً في التفكير، أعد إرسال رسالتك يا بطل!";
+    }
 }
 
-// --- 3. وظائف المراسلة ---
+// --- 3. وظائف الإرسال ---
 async function sendTyping(psid, state) {
     const action = state ? "typing_on" : "typing_off";
     await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
@@ -59,14 +65,14 @@ async function sendMessage(psid, text) {
         message: { 
             text: text,
             quick_replies: [
-                { content_type: "text", title: "من هو ويزي؟", payload: "DEV_WIZZY" },
-                { content_type: "text", title: "مساعدة", payload: "HELP_ME" }
+                { content_type: "text", title: "من هو ويزي؟", payload: "DEV" },
+                { content_type: "text", title: "مساعدة", payload: "HELP" }
             ]
         }
     });
 }
 
-// --- 4. المسارات (Routes) ---
+// --- 4. معالجة الـ Webhook ---
 app.get('/webhook', (req, res) => {
     if (req.query['hub.verify_token'] === VERIFY_TOKEN) res.status(200).send(req.query['hub.challenge']);
     else res.sendStatus(403);
@@ -85,18 +91,16 @@ app.post('/webhook', async (req, res) => {
                 let text = event.message?.text || "";
                 let image = null;
 
-                // التفاعل الفوري مع الصور والنصوص
+                // التفاعل مع الصور والنصوص
                 if (message_id) {
                     if (event.message?.attachments && event.message.attachments[0].type === 'image') {
                         image = event.message.attachments[0].payload.url;
-                        text = text || "حلل هذه الصورة";
-                        await sendReaction(sender_id, message_id, "love"); // قلب على الصور
+                        await sendReaction(sender_id, message_id, "love");
                     } else if (text) {
-                        await sendReaction(sender_id, message_id, "smile"); // ابتسامة على النصوص
+                        await sendReaction(sender_id, message_id, "smile");
                     }
                 }
 
-                // معالجة الأزرار
                 if (event.postback) text = event.postback.payload;
                 if (event.message?.quick_reply) text = event.message.quick_reply.payload;
 
@@ -110,6 +114,6 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.get('/', (req, res) => res.send('🚀 Coku Ultra v4 is Active!'));
+app.get('/', (req, res) => res.send('🚀 Coku Ultra v5 is Stabilized!'));
 
 export default app;
