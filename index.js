@@ -6,61 +6,67 @@ const app = express().use(bodyParser.json());
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
-// دالة الذكاء الاصطناعي - نسخة "الاستجابة السريعة"
+// دالة جلب الرد من الذكاء الاصطناعي (مبسطة جداً)
 async function getCokuResponse(userMessage) {
     try {
-        const response = await axios.post('https://text.pollinations.ai/', {
+        const res = await axios.post('https://text.pollinations.ai/', {
             messages: [
-                { role: 'system', content: 'أنت Coku، ذكاء اصطناعي متطور ومختصر، مطور بواسطة ويزي. رد بالفصحى.' },
+                { role: 'system', content: 'أنت Coku، مساعد ذكي ومختصر بالفصحى من تطوير ويزي.' },
                 { role: 'user', content: userMessage }
             ],
-            model: 'openai', // أسرع موديل متاح حالياً
-            jsonMode: false
-        }, { timeout: 9000 }); // مهلة كافية قبل فصل Vercel
-
-        return response.data; // الموديل ده بيرد نص مباشر أحياناً
+            model: 'openai'
+        }, { timeout: 8000 }); // مهلة 8 ثوانٍ
+        
+        // الموديل ده أحياناً بيرد بالنص مباشرة في res.data
+        return typeof res.data === 'string' ? res.data : res.data.choices[0].message.content;
     } catch (e) {
-        console.error("AI Error:", e.message);
-        return "أنا معك! اسألني مرة أخرى وسأجيبك فوراً.";
+        console.error("AI ERROR:", e.message);
+        return "أنا هنا! اسألني مرة أخرى وسأجيبك.";
     }
 }
 
 app.post('/webhook', async (req, res) => {
     const body = req.body;
+
     if (body.object === 'page') {
-        // رد فوري لفيسبوك عشان ما يكرر إرسال الرسالة
+        // رد فوري لفيسبوك لمنع تكرار الرسائل
         res.status(200).send('EVENT_RECEIVED');
 
         for (let entry of body.entry) {
-            if (entry.messaging && entry.messaging[0]) {
-                let event = entry.messaging[0];
-                let sender_id = event.sender.id;
-                let text = event.message?.text || event.message?.quick_reply?.payload;
+            let event = entry.messaging ? entry.messaging[0] : null;
+            if (!event || !event.message) continue;
 
-                if (text) {
-                    // تفعيل علامة الكتابة
-                    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                        recipient: { id: sender_id },
-                        sender_action: "typing_on"
-                    }).catch(() => {});
+            let sender_id = event.sender.id;
+            let text = event.message.text;
 
-                    // جلب الرد من الذكاء الاصطناعي
-                    const replyText = await getCokuResponse(text);
-                    
-                    // إرسال الرد النهائي
-                    await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                        recipient: { id: sender_id },
-                        message: { text: String(replyText) }
-                    }).catch(err => console.log("FB Send Error"));
-                }
+            if (text) {
+                // تفعيل علامة الكتابة
+                await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+                    recipient: { id: sender_id },
+                    sender_action: "typing_on"
+                }).catch(() => {});
+
+                // الحصول على الرد
+                const reply = await getCokuResponse(text);
+
+                // إرسال الرسالة النهائية
+                await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
+                    recipient: { id: sender_id },
+                    message: { text: String(reply) }
+                }).catch(err => {
+                    console.error("FB SEND ERROR:", err.response?.data || err.message);
+                });
             }
         }
     }
 });
 
 app.get('/webhook', (req, res) => {
-    if (req.query['hub.verify_token'] === VERIFY_TOKEN) res.status(200).send(req.query['hub.challenge']);
-    else res.sendStatus(403);
+    if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
+        res.status(200).send(req.query['hub.challenge']);
+    } else {
+        res.sendStatus(403);
+    }
 });
 
 export default app;
