@@ -1,72 +1,123 @@
-import express from 'express';
-import bodyParser from 'body-parser';
-import axios from 'axios';
+import express from "express";
+import fetch from "node-fetch";
 
-const app = express().use(bodyParser.json());
+const app = express();
+app.use(express.json());
+
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const COHERE_API_KEY = process.env.COHERE_API_KEY;
 
-// دالة جلب الرد من الذكاء الاصطناعي (مبسطة جداً)
-async function getCokuResponse(userMessage) {
-    try {
-        const res = await axios.post('https://text.pollinations.ai/', {
-            messages: [
-                { role: 'system', content: 'أنت Coku، مساعد ذكي ومختصر بالفصحى من تطوير ويزي.' },
-                { role: 'user', content: userMessage }
-            ],
-            model: 'openai'
-        }, { timeout: 8000 }); // مهلة 8 ثوانٍ
-        
-        // الموديل ده أحياناً بيرد بالنص مباشرة في res.data
-        return typeof res.data === 'string' ? res.data : res.data.choices[0].message.content;
-    } catch (e) {
-        console.error("AI ERROR:", e.message);
-        return "أنا هنا! اسألني مرة أخرى وسأجيبك.";
-    }
+const histories = new Map();
+
+async function askCohere(messages) {
+  const response = await fetch("https://api.cohere.com/v2/chat", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${COHERE_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "command-a-03-2025",
+      temperature: 0.3,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: [{ type: "text", text: m.content }]
+      }))
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  const data = await response.json();
+
+  return data?.message?.content?.[0]?.text || "عذراً، لم أستطع الرد.";
 }
 
-app.post('/webhook', async (req, res) => {
+async function sendFacebookMessage(userId, text) {
+  await fetch(
+    `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        recipient: {
+          id: userId
+        },
+        message: {
+          text
+        }
+      })
+    }
+  );
+}
+
+app.get("/", (req, res) => {
+  res.send("Facebook Messenger Bot Running");
+});
+
+app.get("/webhook", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.sendStatus(403);
+});
+
+app.post("/webhook", async (req, res) => {
+  try {
     const body = req.body;
 
-    if (body.object === 'page') {
-        // رد فوري لفيسبوك لمنع تكرار الرسائل
-        res.status(200).send('EVENT_RECEIVED');
-
-        for (let entry of body.entry) {
-            let event = entry.messaging ? entry.messaging[0] : null;
-            if (!event || !event.message) continue;
-
-            let sender_id = event.sender.id;
-            let text = event.message.text;
-
-            if (text) {
-                // تفعيل علامة الكتابة
-                await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                    recipient: { id: sender_id },
-                    sender_action: "typing_on"
-                }).catch(() => {});
-
-                // الحصول على الرد
-                const reply = await getCokuResponse(text);
-
-                // إرسال الرسالة النهائية
-                await axios.post(`https://graph.facebook.com/v21.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`, {
-                    recipient: { id: sender_id },
-                    message: { text: String(reply) }
-                }).catch(err => {
-                    console.error("FB SEND ERROR:", err.response?.data || err.message);
-                });
-            }
-        }
+    if (body.object !== "page") {
+      return res.sendStatus(404);
     }
+
+    for (const entry of body.entry) {
+      for (const event of entry.messaging) {
+        if (!event.message?.text) continue;
+
+        const senderId = event.sender.id;
+        const userMessage = event.message.text;
+
+        let history = histories.get(senderId) || [];
+
+        history.push({
+          role: "user",
+          content: userMessage
+        });
+
+        history = history.slice(-20);
+
+        const reply = await askCohere(history);
+
+        history.push({
+          role: "assistant",
+          content: reply
+        });
+
+        histories.set(senderId, history);
+
+        await sendFacebookMessage(senderId, reply);
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    res.sendStatus(500);
+  }
 });
 
-app.get('/webhook', (req, res) => {
-    if (req.query['hub.verify_token'] === VERIFY_TOKEN) {
-        res.status(200).send(req.query['hub.challenge']);
-    } else {
-        res.sendStatus(403);
-    }
-});
+const PORT = process.env.PORT || 3000;
 
-export default app;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
