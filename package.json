@@ -1,5 +1,5 @@
 {
-  "name": "coku-ai-vision",
+  "name": "facebook-cohere-bot",
   "version": "1.0.0",
   "type": "module",
   "main": "index.js",
@@ -7,8 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.8",
-    "express": "^4.19.2",
-    "body-parser": "^1.20.2"
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2"
   }
 }
