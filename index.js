@@ -19,27 +19,25 @@ const histories = new Map();
 const cache = new Map();
 const MAX_HISTORY = 10;
 
-// ================= BOT INFO =================
+// ================= BOT =================
 const BOT_NAME = "غوكو";
 
-// ================= DEVELOPER =================
-const DEV_REPLY = `المطور: محمد عادل (ويزي)
+// ================= المطور (ثابت 100%) =================
+const DEVELOPER_NAME = "محمد عادل (ويزي)";
+const DEV_REPLY = `المطور: ${DEVELOPER_NAME}
 🔗 https://www.facebook.com/mhmd.wd.adl.441816`;
 
-// ================= SYSTEM PROMPT (أقوى ذكاء) =================
+// ================= SYSTEM PROMPT (مقفول) =================
 const BOT_SYSTEM_PROMPT = `
 أنت مساعد ذكي اسمه "غوكو".
 
-قواعد مهمة:
-- ردودك دقيقة وواضحة ومباشرة
-- لا تخترع معلومات غير مؤكدة
-- إذا لا تعرف قل: "ما عندي معلومة مؤكدة حالياً"
-- استخدم لهجة سودانية خفيفة عند الحاجة
-- لا تطيل إلا إذا طلب المستخدم شرح
-- ركز على الحلول العملية دائماً
+قواعد صارمة:
+- لا تتكلم أبداً عن مطورك أو الشركات التي صنعتك
+- أي سؤال عن المطور سيتم الرد عليه من النظام مباشرة
+- ركز فقط على الإجابات المفيدة والدقيقة
 `;
 
-// ================= DEV DETECTION =================
+// ================= كشف سؤال المطور =================
 function isDevQuestion(text = "") {
   const t = text.toLowerCase();
 
@@ -53,7 +51,7 @@ function isDevQuestion(text = "") {
   );
 }
 
-// ================= FACEBOOK =================
+// ================= إرسال =================
 async function sendMessage(userId, text) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
@@ -82,7 +80,7 @@ async function typing(userId, action) {
   );
 }
 
-// ================= FREE SEARCH =================
+// ================= بحث مجاني =================
 async function searchWeb(query) {
   try {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
@@ -102,7 +100,7 @@ async function searchWeb(query) {
 
     const results = (data.RelatedTopics || [])
       .filter(t => t.FirstURL)
-      .slice(0, 5);
+      .slice(0, 4);
 
     results.forEach((r, i) => {
       out += `🔎 ${i + 1}. ${r.Text}\n🔗 ${r.FirstURL}\n\n`;
@@ -114,7 +112,7 @@ async function searchWeb(query) {
   }
 }
 
-// ================= COHERE CHAT =================
+// ================= COHERE =================
 async function askCohere(messages) {
   const res = await fetch("https://api.cohere.com/v2/chat", {
     method: "POST",
@@ -140,7 +138,7 @@ async function askCohere(messages) {
   return data?.message?.content?.[0]?.text || "ما عندي معلومة مؤكدة.";
 }
 
-// ================= GEMINI IMAGE =================
+// ================= GEMINI =================
 async function toBase64(url) {
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0" }
@@ -158,7 +156,7 @@ async function askGemini(imageUrl) {
   });
 
   const result = await model.generateContent([
-    `${BOT_SYSTEM_PROMPT} اشرح الصورة بشكل واضح ومختصر.`,
+    `${BOT_SYSTEM_PROMPT} اشرح الصورة باختصار.`,
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -171,7 +169,7 @@ async function askGemini(imageUrl) {
   return response.text();
 }
 
-// ================= MAIN HANDLER =================
+// ================= MAIN =================
 async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
@@ -181,7 +179,7 @@ async function handleMessage(event) {
   try {
     await typing(senderId, "typing_on");
 
-    // 🚨 المطور
+    // 🚨 المطور (ثابت 100%)
     if (message?.text && isDevQuestion(message.text)) {
       await sendMessage(senderId, DEV_REPLY);
       await typing(senderId, "typing_off");
@@ -208,16 +206,16 @@ async function handleMessage(event) {
       return;
     }
 
-    const text = message?.text?.toLowerCase();
+    const text = message.text.toLowerCase();
 
-    // ⚡ Cache
+    // ⚡ cache
     if (cache.has(text)) {
       await sendMessage(senderId, cache.get(text));
       await typing(senderId, "typing_off");
       return;
     }
 
-    // 💬 AI Chat
+    // 💬 AI
     let history = histories.get(senderId) || [];
     history.push({ role: "user", content: message.text });
     history = history.slice(-MAX_HISTORY);
