@@ -50,7 +50,7 @@ async function sendFacebookMessage(userId, text) {
   );
 }
 
-// ================= OPENROUTER CHAT =================
+// ================= OPENROUTER CHAT (النموذج الجديد) =================
 async function askOpenRouter(messages) {
   try {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -60,7 +60,7 @@ async function askOpenRouter(messages) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3.2-3b-instruct:free",
+        model: "deepseek/deepseek-r1-distill-llama-8b:free", // 👈 النموذج الأقوى
         messages: [
           { role: "system", content: BOT_SYSTEM_PROMPT },
           ...messages
