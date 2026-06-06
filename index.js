@@ -1,7 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
 import crypto from "crypto";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import Tesseract from "tesseract.js";
 
 const app = express();
@@ -11,14 +10,13 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const APP_SECRET = process.env.APP_SECRET;
 const COHERE_API_KEY = process.env.COHERE_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY; // هذا الجديد
 
 // ================= BOT INFO =================
 const BOT_NAME = "غوكو";
 const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
 
 // ================= INIT =================
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const histories = new Map();
 
 // ================= CLEANUP OLD HISTORIES =================
@@ -105,7 +103,6 @@ async function sendFacebookAction(userId, action) {
 
 async function sendFacebookMessage(userId, text) {
   try {
-    // تقسيم الرسائل الطويلة (فيسبوك يسمح بـ 2000 حرف كحد أقصى)
     const maxLength = 2000;
     if (text.length <= maxLength) {
       await fetch(
@@ -120,7 +117,6 @@ async function sendFacebookMessage(userId, text) {
         }
       );
     } else {
-      // تقسيم الرسالة إلى أجزاء
       const parts = [];
       for (let i = 0; i < text.length; i += maxLength) {
         parts.push(text.substring(i, i + maxLength));
@@ -138,7 +134,6 @@ async function sendFacebookMessage(userId, text) {
             })
           }
         );
-        // انتظار قصير بين الرسائل المتتالية
         await new Promise(resolve => setTimeout(resolve, 300));
       }
     }
@@ -212,31 +207,40 @@ async function extractOCR(buffer) {
   }
 }
 
-// ================= GEMINI VISION =================
-async function askGeminiVision(buffer) {
+// ================= HUGGING FACE VISION =================
+async function askHuggingFaceVision(buffer) {
   try {
     const base64 = buffer.toString("base64");
 
-    // === تم تعديل اسم النموذج هنا ===
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash-8b"
+    const model = "llava-hf/llava-1.5-7b-hf";
+
+    const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        inputs: { image: base64 },
+        parameters: { max_new_tokens: 300 }
+      })
     });
 
-    const result = await model.generateContent([
-      "اشرح الصورة بشكل واضح وبسيط",
-      {
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: base64
-        }
-      }
-    ]);
+    if (!res.ok) {
+      console.error("Hugging Face error:", res.status);
+      return "❌ عذراً، حدث خطأ في تحليل الصورة.";
+    }
 
-    const response = await result.response;
-    return response.text();
+    const data = await res.json();
+
+    if (Array.isArray(data) && data[0]?.generated_text) {
+      return data[0].generated_text;
+    }
+
+    return "لم أستطع فهم الصورة، حاول مرة أخرى.";
   } catch (err) {
-    console.error("Gemini vision error:", err);
-    throw err;
+    console.error("Hugging Face vision error:", err);
+    return "⚠️ حدث خطأ أثناء معالجة الصورة.";
   }
 }
 
@@ -245,15 +249,11 @@ async function analyzeImage(imageUrl) {
   console.log("🔍 Starting image analysis for:", imageUrl);
   
   try {
-    // جلب الصورة
-    console.log("📥 Fetching image...");
     const buffer = await fetchImageBuffer(imageUrl);
     console.log("✅ Image fetched successfully, size:", buffer.length, "bytes");
 
-    // تحليل الصورة بالنص والرؤية
-    console.log("🧠 Starting Gemini vision analysis...");
     const [vision, ocr] = await Promise.all([
-      askGeminiVision(buffer),
+      askHuggingFaceVision(buffer),
       extractOCR(buffer)
     ]);
     console.log("✅ Analysis complete");
@@ -286,7 +286,6 @@ async function handleMessage(event) {
   try {
     await sendFacebookAction(senderId, "typing_on");
 
-    // 🚨 سؤال المطور
     if (message?.text && isDevQuestion(message.text)) {
       console.log("👨‍💻 Dev question detected");
       await sendFacebookMessage(
@@ -297,13 +296,11 @@ async function handleMessage(event) {
       return;
     }
 
-    // 🖼 صورة
     if (message?.attachments && message.attachments[0]?.type === "image") {
       console.log("🖼️ Image attachment detected");
       const url = message.attachments[0].payload.url;
       console.log("📎 Image URL:", url);
 
-      // إرسال رسالة انتظار
       await sendFacebookMessage(senderId, "🔍 جاري تحليل الصورة...");
 
       const reply = await analyzeImage(url);
@@ -314,7 +311,6 @@ async function handleMessage(event) {
       return;
     }
 
-    // 🎯 ملحق (sticker, GIF, file, etc.)
     if (message?.attachments && message.attachments[0]?.type && message.attachments[0].type !== "image") {
       console.log("📎 Other attachment type:", message.attachments[0].type);
       await sendFacebookMessage(
@@ -325,7 +321,6 @@ async function handleMessage(event) {
       return;
     }
 
-    // 💬 نص
     if (message?.text) {
       console.log("💬 Text message:", message.text);
       
@@ -365,10 +360,8 @@ app.post("/webhook", (req, res) => {
     return res.sendStatus(404);
   }
 
-  // إرسال 200 OK فوراً لفيسبوك
   res.sendStatus(200);
 
-  // معالجة الرسائل في الخلفية
   for (const entry of req.body.entry) {
     for (const event of entry.messaging) {
       if (event.message?.is_echo) {
@@ -378,7 +371,6 @@ app.post("/webhook", (req, res) => {
       
       handleMessage(event).catch(err => {
         console.error("❌ Background processing error:", err);
-        // محاولة إرسال رسالة خطأ للمستخدم
         sendFacebookMessage(
           event.sender.id, 
           "عذراً، حدث خطأ أثناء معالجة طلبك"
@@ -439,7 +431,6 @@ app.listen(PORT, () => {
   console.log("=".repeat(50));
 });
 
-// ================= GRACEFUL SHUTDOWN =================
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM signal received: closing HTTP server');
   process.exit(0);
