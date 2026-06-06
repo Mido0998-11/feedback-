@@ -11,7 +11,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const COHERE_API_KEY = process.env.COHERE_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// ================= BOT =================
+// ================= BOT INFO =================
 const BOT_NAME = "غوكو";
 const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
 
@@ -25,6 +25,8 @@ const histories = new Map();
 const BOT_SYSTEM_PROMPT = `
 أنت مساعد ذكي ومرح اسمه غوكو.
 كن مختصر وواضح.
+لا تذكر أي شركة أو جهة كمطور لك.
+مطورك هو محمد عادل ويزي (Wizzy).
 `;
 
 // ================= DETECT DEV QUESTION =================
@@ -41,30 +43,23 @@ function isDevQuestion(text = "") {
   );
 }
 
-// ================= LANGUAGE DEV REPLY =================
-function getDevReplyByLanguage(text) {
+// ================= FORCE IDENTITY FIX =================
+function forceIdentity(text) {
   const t = (text || "").toLowerCase();
 
-  // English
   if (
-    t.includes("who made you") ||
-    t.includes("developer") ||
-    t.includes("creator")
+    t.includes("cohere") ||
+    t.includes("google") ||
+    t.includes("openai") ||
+    t.includes("company") ||
+    t.includes("developed by") ||
+    t.includes("تم تطويري") ||
+    t.includes("i am developed")
   ) {
-    return `My developer is ${DEVELOPER_NAME}`;
+    return `أنا غوكو، تم تطويري بواسطة ${DEVELOPER_NAME}`;
   }
 
-  // Arabic
-  if (
-    t.includes("من صنعك") ||
-    t.includes("من برمجك") ||
-    t.includes("من هو مطورك")
-  ) {
-    return `مطورك هو ${DEVELOPER_NAME}`;
-  }
-
-  // fallback
-  return DEVELOPER_NAME;
+  return text;
 }
 
 // ================= FACEBOOK =================
@@ -118,7 +113,7 @@ async function askCohere(messages) {
   });
 
   const data = await res.json();
-  return data?.message?.content?.[0]?.text || "ما قدرت أرد حالياً.";
+  return data?.message?.content?.[0]?.text || `أنا غوكو، تم تطويري بواسطة ${DEVELOPER_NAME}`;
 }
 
 // ================= GEMINI =================
@@ -136,7 +131,7 @@ async function askGemini(imageUrl) {
   });
 
   const result = await model.generateContent([
-    "اشرح الصورة باختصار",
+    "اشرح الصورة باختصار وبوضوح",
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -146,7 +141,7 @@ async function askGemini(imageUrl) {
   ]);
 
   const response = await result.response;
-  return response.text() || "ما قدرت أفهم الصورة.";
+  return response.text() || `أنا غوكو، تم تطويري بواسطة ${DEVELOPER_NAME}`;
 }
 
 // ================= MAIN =================
@@ -159,10 +154,12 @@ async function handleMessage(event) {
   try {
     await sendFacebookAction(senderId, "typing_on");
 
-    // 🚨 المطور (ثابت + متعدد اللغات)
+    // 🚨 سؤال المطور (ثابت 100%)
     if (message?.text && isDevQuestion(message.text)) {
-      const devReply = getDevReplyByLanguage(message.text);
-      await sendFacebookMessage(senderId, devReply);
+      await sendFacebookMessage(
+        senderId,
+        `أنا غوكو، تم تطويري بواسطة ${DEVELOPER_NAME}`
+      );
       await sendFacebookAction(senderId, "typing_off");
       return;
     }
@@ -171,7 +168,8 @@ async function handleMessage(event) {
     if (message?.attachments?.[0]?.type === "image") {
       const url = message.attachments[0].payload.url;
 
-      const reply = await askGemini(url);
+      let reply = await askGemini(url);
+      reply = forceIdentity(reply);
 
       await sendFacebookMessage(senderId, reply);
       await sendFacebookAction(senderId, "typing_off");
@@ -183,7 +181,10 @@ async function handleMessage(event) {
     history.push({ role: "user", content: message.text });
     history = history.slice(-10);
 
-    const reply = await askCohere(history);
+    let reply = await askCohere(history);
+
+    // 🔥 حماية الهوية 100%
+    reply = forceIdentity(reply);
 
     history.push({ role: "assistant", content: reply });
     histories.set(senderId, history);
@@ -193,7 +194,10 @@ async function handleMessage(event) {
 
   } catch (err) {
     console.error(err);
-    await sendFacebookMessage(senderId, DEVELOPER_NAME);
+    await sendFacebookMessage(
+      senderId,
+      `أنا غوكو، تم تطويري بواسطة ${DEVELOPER_NAME}`
+    );
     await sendFacebookAction(senderId, "typing_off");
   }
 }
