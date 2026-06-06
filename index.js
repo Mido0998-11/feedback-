@@ -17,19 +17,33 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ================= MEMORY =================
 const histories = new Map();
 
-// التوجيه الصحيح والمعدل: البوت يعرف تماماً إنك إنت المطور وصانعه الوحيد
-const BOT_SYSTEM_PROMPT = "أنت مساعد ذكي ومرح، تجيب باختصار ووضوح وبلهجة سودانية ودية. تذكر دائماً أن مطورك وصانعك هو (محمد عادل ويزي - Wizzy)، وإذا سألك أي مستخدم عن من قام ببرمجتك أو تطويرك، أخبره فخوراً بأن مطورك هو محمد عادل ويزي.";
+// ================= BOT INFO =================
+const BOT_NAME = "غوكو";
+const DEVELOPER_NAME = "محمد عادل (ويزي)";
+
+// ================= SYSTEM PROMPT =================
+const BOT_SYSTEM_PROMPT = `
+أنت مساعد ذكي اسمه "غوكو".
+تتكلم بلهجة سودانية بسيطة وودية.
+
+مهم جداً:
+- لا تذكر المطور أو الصانع في أي رد عادي.
+- إذا سُئلت فقط: من صنعك أو من برمجك
+  قل: تم برمجتي بواسطة ${DEVELOPER_NAME}.
+`;
+
+// ================= CHECK DEVELOPER QUESTION =================
+function isAskingAboutDeveloper(text = "") {
+  return (
+    text.includes("من صنعك") ||
+    text.includes("من برمجك") ||
+    text.includes("مين عملك") ||
+    text.includes("who made you")
+  );
+}
 
 // ================= COHERE (TEXT) =================
 async function askCohere(messages) {
-  const formattedMessages = [
-    { role: "system", content: [{ type: "text", text: BOT_SYSTEM_PROMPT }] },
-    ...messages.map(m => ({
-      role: m.role,
-      content: m.content
-    }))
-  ];
-
   const response = await fetch("https://api.cohere.com/v2/chat", {
     method: "POST",
     headers: {
@@ -39,7 +53,13 @@ async function askCohere(messages) {
     body: JSON.stringify({
       model: "command-a-03-2025",
       temperature: 0.5,
-      messages: formattedMessages
+      messages: [
+        { role: "system", content: BOT_SYSTEM_PROMPT },
+        ...messages.map(m => ({
+          role: m.role,
+          content: m.content
+        }))
+      ]
     })
   });
 
@@ -48,12 +68,19 @@ async function askCohere(messages) {
   }
 
   const data = await response.json();
-  return data?.message?.content?.[0]?.text || "عذراً، لم أستطع الرد.";
+
+  return (
+    data?.message?.content?.[0]?.text ||
+    "عذراً، لم أستطع الرد."
+  );
 }
 
 // ================= GEMINI (IMAGE) =================
 async function toBase64(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0" }
+  });
+
   const buffer = await res.arrayBuffer();
   return Buffer.from(buffer).toString("base64");
 }
@@ -62,11 +89,11 @@ async function askGemini(imageUrl) {
   const base64 = await toBase64(imageUrl);
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash" 
+    model: "gemini-1.5-flash"
   });
 
   const result = await model.generateContent([
-    `${BOT_SYSTEM_PROMPT} اشرح هذه الصورة بالعامية السودانية وبشكل واضح ومختصر جداً.`,
+    `${BOT_SYSTEM_PROMPT} اشرح الصورة باللهجة السودانية بشكل مختصر وواضح.`,
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -76,12 +103,10 @@ async function askGemini(imageUrl) {
   ]);
 
   const response = await result.response;
-  return response.text() || "ما قدرت أفهم الصورة دي والله.";
+  return response.text() || "ما قدرت أفهم الصورة.";
 }
 
-// ================= FACEBOOK ACTIONS & SEND =================
-
-// دالة تفعيل الأكشن (يكتب الآن...)
+// ================= FACEBOOK ACTIONS =================
 async function sendFacebookAction(userId, action) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
@@ -96,7 +121,6 @@ async function sendFacebookAction(userId, action) {
   );
 }
 
-// دالة إرسال الرسالة النصية
 async function sendFacebookMessage(userId, text) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
@@ -111,12 +135,7 @@ async function sendFacebookMessage(userId, text) {
   );
 }
 
-// ================= ROUTES =================
-app.get("/", (req, res) => {
-  res.send("Bot is running 🚀");
-});
-
-// VERIFY WEBHOOK
+// ================= WEBHOOK VERIFY =================
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -125,49 +144,64 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
+
   return res.sendStatus(403);
 });
 
-// ================= BACKGROUND PROCESSOR =================
-async function handleMessageBackground(event) {
+// ================= BOT LOGIC =================
+async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
+
   let reply = "";
 
   try {
-    // تشغيل ميزة "يكتب الآن..." أول ما نستلم الرسالة
     await sendFacebookAction(senderId, "typing_on");
 
-    // 1. معالجة الصور عبر Gemini
-    if (message?.attachments?.[0]?.type === "image") {
+    // 🔥 سؤال عن المطور
+    if (message?.text && isAskingAboutDeveloper(message.text)) {
+      reply = `تم برمجتي بواسطة ${DEVELOPER_NAME}`;
+    }
+
+    // 🖼 صورة
+    else if (message?.attachments?.[0]?.type === "image") {
       const imageUrl = message.attachments[0].payload.url;
       reply = await askGemini(imageUrl);
     }
-    // 2. معالجة النصوص عبر Cohere
+
+    // 💬 نص
     else if (message?.text) {
       let history = histories.get(senderId) || [];
-      history.push({ role: "user", content: message.text });
+
+      history.push({
+        role: "user",
+        content: message.text
+      });
+
       history = history.slice(-20);
 
       reply = await askCohere(history);
 
-      history.push({ role: "assistant", content: reply });
+      history.push({
+        role: "assistant",
+        content: reply
+      });
+
       histories.set(senderId, history);
     }
 
-    // إيقاف ميزة الكتابة وإرسال الرد للمستخدم
     await sendFacebookAction(senderId, "typing_off");
+
     if (reply) {
       await sendFacebookMessage(senderId, reply);
     }
   } catch (err) {
-    console.error("BACKGROUND PROCESS ERROR:", err);
-    // إلغاء الـ Typing لو حصل خطأ عشان ما يعلق في الشات
+    console.error("ERROR:", err);
     await sendFacebookAction(senderId, "typing_off");
   }
 }
 
-// ================= MAIN BOT LOGIC =================
+// ================= MAIN WEBHOOK =================
 app.post("/webhook", (req, res) => {
   const body = req.body;
 
@@ -175,16 +209,13 @@ app.post("/webhook", (req, res) => {
     return res.sendStatus(404);
   }
 
-  // الرد السريع لفيسبوك عشان الـ Timeout
-  res.status(200).send("EVENT_RECEIVED");
+  res.status(200).send("OK");
 
   for (const entry of body.entry) {
     for (const event of entry.messaging) {
-      // حماية من الـ Echo لو البوت بيرد على نفسه
       if (event.message?.is_echo) continue;
-
       if (event.message?.text || event.message?.attachments) {
-        handleMessageBackground(event);
+        handleMessage(event);
       }
     }
   }
@@ -192,6 +223,7 @@ app.post("/webhook", (req, res) => {
 
 // ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🤖 ${BOT_NAME} is running...`);
 });
