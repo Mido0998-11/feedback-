@@ -13,6 +13,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // ================= BOT =================
 const BOT_NAME = "غوكو";
+const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
 
 // ================= INIT GEMINI =================
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -26,7 +27,7 @@ const BOT_SYSTEM_PROMPT = `
 كن مختصر وواضح.
 `;
 
-// ================= كشف سؤال المطور =================
+// ================= DETECT DEV QUESTION =================
 function isDevQuestion(text = "") {
   const t = text.toLowerCase();
 
@@ -40,22 +41,30 @@ function isDevQuestion(text = "") {
   );
 }
 
-// ================= تصحيح أخطاء AI =================
-function fixDeveloperReply(text) {
+// ================= LANGUAGE DEV REPLY =================
+function getDevReplyByLanguage(text) {
   const t = (text || "").toLowerCase();
 
+  // English
   if (
-    t.includes("bumu") ||
-    t.includes("cohere") ||
-    t.includes("google") ||
-    t.includes("i don't know") ||
-    t.includes("لا اعرف") ||
-    t.trim() === ""
+    t.includes("who made you") ||
+    t.includes("developer") ||
+    t.includes("creator")
   ) {
-    return "المطور محمد عادل";
+    return `My developer is ${DEVELOPER_NAME}`;
   }
 
-  return text;
+  // Arabic
+  if (
+    t.includes("من صنعك") ||
+    t.includes("من برمجك") ||
+    t.includes("من هو مطورك")
+  ) {
+    return `مطورك هو ${DEVELOPER_NAME}`;
+  }
+
+  // fallback
+  return DEVELOPER_NAME;
 }
 
 // ================= FACEBOOK =================
@@ -109,7 +118,7 @@ async function askCohere(messages) {
   });
 
   const data = await res.json();
-  return data?.message?.content?.[0]?.text || "المطور محمد عادل";
+  return data?.message?.content?.[0]?.text || "ما قدرت أرد حالياً.";
 }
 
 // ================= GEMINI =================
@@ -137,7 +146,7 @@ async function askGemini(imageUrl) {
   ]);
 
   const response = await result.response;
-  return response.text() || "المطور محمد عادل";
+  return response.text() || "ما قدرت أفهم الصورة.";
 }
 
 // ================= MAIN =================
@@ -147,14 +156,13 @@ async function handleMessage(event) {
 
   if (!message || (!message.text && !message.attachments)) return;
 
-  const text = (message.text || "").toLowerCase();
-
   try {
     await sendFacebookAction(senderId, "typing_on");
 
-    // 🚨 سؤال المطور (مقفول 100%)
+    // 🚨 المطور (ثابت + متعدد اللغات)
     if (message?.text && isDevQuestion(message.text)) {
-      await sendFacebookMessage(senderId, "المطور محمد عادل");
+      const devReply = getDevReplyByLanguage(message.text);
+      await sendFacebookMessage(senderId, devReply);
       await sendFacebookAction(senderId, "typing_off");
       return;
     }
@@ -162,9 +170,8 @@ async function handleMessage(event) {
     // 🖼 صورة
     if (message?.attachments?.[0]?.type === "image") {
       const url = message.attachments[0].payload.url;
-      let reply = await askGemini(url);
 
-      reply = fixDeveloperReply(reply);
+      const reply = await askGemini(url);
 
       await sendFacebookMessage(senderId, reply);
       await sendFacebookAction(senderId, "typing_off");
@@ -176,10 +183,7 @@ async function handleMessage(event) {
     history.push({ role: "user", content: message.text });
     history = history.slice(-10);
 
-    let reply = await askCohere(history);
-
-    // 🔥 تصحيح أي غلطة (bumu وغيره)
-    reply = fixDeveloperReply(reply);
+    const reply = await askCohere(history);
 
     history.push({ role: "assistant", content: reply });
     histories.set(senderId, history);
@@ -189,7 +193,7 @@ async function handleMessage(event) {
 
   } catch (err) {
     console.error(err);
-    await sendFacebookMessage(senderId, "المطور محمد عادل");
+    await sendFacebookMessage(senderId, DEVELOPER_NAME);
     await sendFacebookAction(senderId, "typing_off");
   }
 }
