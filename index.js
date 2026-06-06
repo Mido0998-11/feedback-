@@ -23,14 +23,10 @@ const histories = new Map();
 // ================= SYSTEM PROMPT =================
 const BOT_SYSTEM_PROMPT = `
 أنت مساعد ذكي ومرح اسمه غوكو.
-
-قواعد:
-- مطورك هو محمد عادل
-- لا تذكر أي شركة كمطور
-- كن مختصر وواضح
+كن مختصر وواضح.
 `;
 
-// ================= DEV CHECK =================
+// ================= كشف سؤال المطور =================
 function isDevQuestion(text = "") {
   const t = text.toLowerCase();
 
@@ -42,6 +38,24 @@ function isDevQuestion(text = "") {
     t.includes("developer") ||
     t.includes("creator")
   );
+}
+
+// ================= تصحيح أخطاء AI =================
+function fixDeveloperReply(text) {
+  const t = (text || "").toLowerCase();
+
+  if (
+    t.includes("bumu") ||
+    t.includes("cohere") ||
+    t.includes("google") ||
+    t.includes("i don't know") ||
+    t.includes("لا اعرف") ||
+    t.trim() === ""
+  ) {
+    return "المطور محمد عادل";
+  }
+
+  return text;
 }
 
 // ================= FACEBOOK =================
@@ -95,10 +109,10 @@ async function askCohere(messages) {
   });
 
   const data = await res.json();
-  return data?.message?.content?.[0]?.text || "ما قدرت أرد حالياً.";
+  return data?.message?.content?.[0]?.text || "المطور محمد عادل";
 }
 
-// ================= GEMINI IMAGE =================
+// ================= GEMINI =================
 async function toBase64(url) {
   const res = await fetch(url);
   const buffer = await res.arrayBuffer();
@@ -113,7 +127,7 @@ async function askGemini(imageUrl) {
   });
 
   const result = await model.generateContent([
-    "اشرح الصورة باختصار وبوضوح",
+    "اشرح الصورة باختصار",
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -123,10 +137,10 @@ async function askGemini(imageUrl) {
   ]);
 
   const response = await result.response;
-  return response.text();
+  return response.text() || "المطور محمد عادل";
 }
 
-// ================= MAIN HANDLER =================
+// ================= MAIN =================
 async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
@@ -138,7 +152,7 @@ async function handleMessage(event) {
   try {
     await sendFacebookAction(senderId, "typing_on");
 
-    // 🚨 المطور (ثابت 100%)
+    // 🚨 سؤال المطور (مقفول 100%)
     if (message?.text && isDevQuestion(message.text)) {
       await sendFacebookMessage(senderId, "المطور محمد عادل");
       await sendFacebookAction(senderId, "typing_off");
@@ -148,7 +162,9 @@ async function handleMessage(event) {
     // 🖼 صورة
     if (message?.attachments?.[0]?.type === "image") {
       const url = message.attachments[0].payload.url;
-      const reply = await askGemini(url);
+      let reply = await askGemini(url);
+
+      reply = fixDeveloperReply(reply);
 
       await sendFacebookMessage(senderId, reply);
       await sendFacebookAction(senderId, "typing_off");
@@ -160,7 +176,10 @@ async function handleMessage(event) {
     history.push({ role: "user", content: message.text });
     history = history.slice(-10);
 
-    const reply = await askCohere(history);
+    let reply = await askCohere(history);
+
+    // 🔥 تصحيح أي غلطة (bumu وغيره)
+    reply = fixDeveloperReply(reply);
 
     history.push({ role: "assistant", content: reply });
     histories.set(senderId, history);
@@ -170,6 +189,7 @@ async function handleMessage(event) {
 
   } catch (err) {
     console.error(err);
+    await sendFacebookMessage(senderId, "المطور محمد عادل");
     await sendFacebookAction(senderId, "typing_off");
   }
 }
@@ -202,7 +222,6 @@ app.get("/webhook", (req, res) => {
 });
 
 // ================= START =================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(process.env.PORT || 3000, () => {
   console.log(`🤖 ${BOT_NAME} running`);
 });
