@@ -1,7 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
 import crypto from "crypto";
-import Tesseract from "tesseract.js";
 
 const app = express();
 
@@ -10,7 +9,7 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const APP_SECRET = process.env.APP_SECRET;
 const COHERE_API_KEY = process.env.COHERE_API_KEY;
-const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY; // هذا الجديد
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 // ================= BOT INFO =================
 const BOT_NAME = "غوكو";
@@ -196,17 +195,6 @@ async function fetchImageBuffer(url) {
   }
 }
 
-// ================= OCR =================
-async function extractOCR(buffer) {
-  try {
-    const result = await Tesseract.recognize(buffer, "eng+ara");
-    return result.data.text?.trim() || "";
-  } catch (err) {
-    console.error("OCR error:", err);
-    return "";
-  }
-}
-
 // ================= HUGGING FACE VISION =================
 async function askHuggingFaceVision(buffer) {
   try {
@@ -252,19 +240,10 @@ async function analyzeImage(imageUrl) {
     const buffer = await fetchImageBuffer(imageUrl);
     console.log("✅ Image fetched successfully, size:", buffer.length, "bytes");
 
-    const [vision, ocr] = await Promise.all([
-      askHuggingFaceVision(buffer),
-      extractOCR(buffer)
-    ]);
+    const vision = await askHuggingFaceVision(buffer);
     console.log("✅ Analysis complete");
 
-    let result = `🧠 تحليل الصورة:\n${vision}`;
-
-    if (ocr && ocr.length > 0) {
-      result += `\n\n📄 النص داخل الصورة:\n${ocr}`;
-    }
-
-    return result;
+    return `🧠 تحليل الصورة:\n${vision}`;
   } catch (err) {
     console.error("❌ Image analysis error:", err);
     return "⚠️ ما قدرت أحلل الصورة. تأكد من نوع الملف وجودته وحاول مرة أخرى.";
