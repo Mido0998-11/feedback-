@@ -22,7 +22,6 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const histories = new Map();
 
 // ================= CLEANUP OLD HISTORIES =================
-// حذف السجلات القديمة كل 30 دقيقة لتوفير الذاكرة
 setInterval(() => {
   const now = Date.now();
   for (const [key, value] of histories.entries()) {
@@ -41,11 +40,16 @@ Be short and clear.
 
 // ================= VERIFY SIGNATURE =================
 function verifyRequestSignature(req, res, buf) {
+  if (!APP_SECRET) {
+    console.warn("APP_SECRET not set - skipping signature verification");
+    return;
+  }
+  
   const signature = req.headers["x-hub-signature-256"];
   
   if (!signature) {
     console.warn("No signature provided in request");
-    return; // نسمح بالمرور لكن نسجل تحذير
+    return;
   }
   
   const elements = signature.split("=");
@@ -69,6 +73,9 @@ function isDevQuestion(text = "") {
     t.includes("من برمجك") ||
     t.includes("من هو مطورك") ||
     t.includes("من طورك") ||
+    t.includes("مين صنعك") ||
+    t.includes("مين برمجك") ||
+    t.includes("مين طورك") ||
     t.includes("who made you") ||
     t.includes("who created you") ||
     t.includes("who developed you") ||
@@ -164,27 +171,34 @@ async function askCohere(messages) {
 
     if (!res.ok) {
       console.error("Cohere API error:", res.status);
-      return `أنا ${BOT_NAME}، حدث خطأ في المعالجة`;
+      return `🎌 أنا ${BOT_NAME}، حدث خطأ في المعالجة`;
     }
 
     const data = await res.json();
-    return data?.message?.content?.[0]?.text || `أنا ${BOT_NAME}`;
+    return data?.message?.content?.[0]?.text || `🎌 أنا ${BOT_NAME}`;
   } catch (err) {
     console.error("Cohere error:", err);
-    return `أنا ${BOT_NAME}، عذراً لا أستطيع الرد حالياً`;
+    return `🎌 أنا ${BOT_NAME}، عذراً لا أستطيع الرد حالياً`;
   }
 }
 
-// ================= IMAGE BASE64 =================
+// ================= IMAGE BUFFER =================
 async function fetchImageBuffer(url) {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0" }
-  });
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" }
+    });
 
-  if (!res.ok) throw new Error("Image fetch failed");
+    if (!res.ok) {
+      throw new Error(`Image fetch failed with status: ${res.status}`);
+    }
 
-  const buffer = await res.arrayBuffer();
-  return Buffer.from(buffer);
+    const buffer = await res.arrayBuffer();
+    return Buffer.from(buffer);
+  } catch (err) {
+    console.error("Error fetching image:", err);
+    throw err;
+  }
 }
 
 // ================= OCR =================
@@ -217,22 +231,31 @@ async function askGeminiVision(buffer) {
       }
     ]);
 
-    return (await result.response).text();
+    const response = await result.response;
+    return response.text();
   } catch (err) {
     console.error("Gemini vision error:", err);
-    return "لم أستطع تحليل الصورة";
+    throw err;
   }
 }
 
 // ================= SMART IMAGE ANALYSIS =================
 async function analyzeImage(imageUrl) {
+  console.log("🔍 Starting image analysis for:", imageUrl);
+  
   try {
+    // جلب الصورة
+    console.log("📥 Fetching image...");
     const buffer = await fetchImageBuffer(imageUrl);
+    console.log("✅ Image fetched successfully, size:", buffer.length, "bytes");
 
+    // تحليل الصورة بالنص والرؤية
+    console.log("🧠 Starting Gemini vision analysis...");
     const [vision, ocr] = await Promise.all([
       askGeminiVision(buffer),
       extractOCR(buffer)
     ]);
+    console.log("✅ Analysis complete");
 
     let result = `🧠 تحليل الصورة:\n${vision}`;
 
@@ -242,8 +265,8 @@ async function analyzeImage(imageUrl) {
 
     return result;
   } catch (err) {
-    console.error("Image analysis error:", err);
-    return "ما قدرت أحلل الصورة، تأكد من نوع الملف وجودته";
+    console.error("❌ Image analysis error:", err);
+    return "⚠️ ما قدرت أحلل الصورة. تأكد من نوع الملف وجودته وحاول مرة أخرى.";
   }
 }
 
@@ -252,13 +275,19 @@ async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
 
-  if (!message || (!message.text && !message.attachments)) return;
+  console.log("📨 Received message:", JSON.stringify(message).substring(0, 200));
+
+  if (!message || (!message.text && !message.attachments)) {
+    console.log("⏭️ Skipping empty message");
+    return;
+  }
 
   try {
     await sendFacebookAction(senderId, "typing_on");
 
     // 🚨 سؤال المطور
     if (message?.text && isDevQuestion(message.text)) {
+      console.log("👨‍💻 Dev question detected");
       await sendFacebookMessage(
         senderId,
         `🎌 أنا ${BOT_NAME}\n👨‍💻 تم تطويري بواسطة ${DEVELOPER_NAME}`
@@ -268,42 +297,54 @@ async function handleMessage(event) {
     }
 
     // 🖼 صورة
-    if (message?.attachments?.[0]?.type === "image") {
+    if (message?.attachments && message.attachments[0]?.type === "image") {
+      console.log("🖼️ Image attachment detected");
       const url = message.attachments[0].payload.url;
+      console.log("📎 Image URL:", url);
+
+      // إرسال رسالة انتظار
+      await sendFacebookMessage(senderId, "🔍 جاري تحليل الصورة...");
 
       const reply = await analyzeImage(url);
-
+      
+      console.log("📤 Sending image analysis reply");
       await sendFacebookMessage(senderId, reply);
       await sendFacebookAction(senderId, "typing_off");
       return;
     }
 
     // 🎯 ملحق (sticker, GIF, file, etc.)
-    if (message?.attachments?.[0]?.type && message.attachments[0].type !== "image") {
+    if (message?.attachments && message.attachments[0]?.type && message.attachments[0].type !== "image") {
+      console.log("📎 Other attachment type:", message.attachments[0].type);
       await sendFacebookMessage(
         senderId,
-        "🎯 حالياً أقدر أتعامل مع النصوص والصور فقط"
+        "🎯 حالياً أقدر أتعامل مع النصوص والصور فقط\n📝 جرب ترسل لي نص أو صورة"
       );
       await sendFacebookAction(senderId, "typing_off");
       return;
     }
 
     // 💬 نص
-    let history = histories.get(senderId) || { messages: [], lastActivity: Date.now() };
-    history.messages.push({ role: "user", content: message.text });
-    history.messages = history.messages.slice(-10);
-    history.lastActivity = Date.now();
+    if (message?.text) {
+      console.log("💬 Text message:", message.text);
+      
+      let history = histories.get(senderId) || { messages: [], lastActivity: Date.now() };
+      history.messages.push({ role: "user", content: message.text });
+      history.messages = history.messages.slice(-10);
+      history.lastActivity = Date.now();
 
-    const reply = await askCohere(history.messages);
+      const reply = await askCohere(history.messages);
 
-    history.messages.push({ role: "assistant", content: reply });
-    histories.set(senderId, history);
+      history.messages.push({ role: "assistant", content: reply });
+      histories.set(senderId, history);
 
-    await sendFacebookMessage(senderId, reply);
-    await sendFacebookAction(senderId, "typing_off");
+      await sendFacebookMessage(senderId, reply);
+      await sendFacebookAction(senderId, "typing_off");
+      return;
+    }
 
   } catch (err) {
-    console.error("Handle message error:", err);
+    console.error("❌ Handle message error:", err);
     await sendFacebookMessage(senderId, `🎌 أنا ${BOT_NAME}، حدث خطأ غير متوقع`);
     await sendFacebookAction(senderId, "typing_off");
   }
@@ -316,7 +357,10 @@ app.use(express.json({
 
 // ================= WEBHOOK POST =================
 app.post("/webhook", (req, res) => {
+  console.log("📡 Webhook received");
+  
   if (req.body.object !== "page") {
+    console.log("❌ Not a page object");
     return res.sendStatus(404);
   }
 
@@ -326,10 +370,13 @@ app.post("/webhook", (req, res) => {
   // معالجة الرسائل في الخلفية
   for (const entry of req.body.entry) {
     for (const event of entry.messaging) {
-      if (event.message?.is_echo) continue;
+      if (event.message?.is_echo) {
+        console.log("🔄 Echo message, skipping");
+        continue;
+      }
       
       handleMessage(event).catch(err => {
-        console.error("Background processing error:", err);
+        console.error("❌ Background processing error:", err);
         // محاولة إرسال رسالة خطأ للمستخدم
         sendFacebookMessage(
           event.sender.id, 
@@ -346,12 +393,14 @@ app.get("/webhook", (req, res) => {
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
+  console.log("🔐 Verification request:", { mode, token });
+
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verified successfully");
+    console.log("✅ Webhook verified successfully");
     return res.status(200).send(challenge);
   }
 
-  console.warn("Webhook verification failed");
+  console.warn("❌ Webhook verification failed");
   res.sendStatus(403);
 });
 
@@ -365,21 +414,46 @@ app.get("/", (req, res) => {
   });
 });
 
-// ================= START SERVER =================
+// ================= KEEP AWAKE (RENDER) =================
 const PORT = process.env.PORT || 3000;
+const KEEP_AWAKE_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+
+if (process.env.RENDER_EXTERNAL_URL) {
+  console.log('🔄 Keep-alive enabled for:', KEEP_AWAKE_URL);
+  setInterval(() => {
+    fetch(`${KEEP_AWAKE_URL}/`)
+      .then(res => res.json())
+      .then(data => console.log('💓 Keep-alive:', data.status))
+      .catch(err => console.log('Keep-alive failed:', err.message));
+  }, 10 * 60 * 1000);
+}
+
+// ================= START SERVER =================
 app.listen(PORT, () => {
+  console.log("=".repeat(50));
   console.log(`🤖 ${BOT_NAME} is running on port ${PORT}`);
   console.log(`👨‍💻 Developed by ${DEVELOPER_NAME}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/`);
+  console.log(`📡 Webhook: http://localhost:${PORT}/webhook`);
+  console.log("=".repeat(50));
 });
 
 // ================= GRACEFUL SHUTDOWN =================
 process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
+  console.log('🛑 SIGTERM signal received: closing HTTP server');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT signal received: closing HTTP server');
+  console.log('🛑 SIGINT signal received: closing HTTP server');
   process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception thrown:', err);
+  process.exit(1);
 });
