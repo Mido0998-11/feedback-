@@ -17,41 +17,38 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ================= MEMORY =================
 const histories = new Map();
 const cache = new Map();
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 12;
 
 // ================= BOT =================
 const BOT_NAME = "غوكو";
 
-// ================= المطور (ثابت 100%) =================
-const DEVELOPER_NAME = "محمد عادل (ويزي)";
-const DEV_REPLY = `المطور: ${DEVELOPER_NAME}
-🔗 https://www.facebook.com/mhmd.wd.adl.441816`;
-
-// ================= SYSTEM PROMPT (مقفول) =================
+// ================= SYSTEM PROMPT (أقوى ذكاء) =================
 const BOT_SYSTEM_PROMPT = `
 أنت مساعد ذكي اسمه "غوكو".
 
 قواعد صارمة:
-- لا تتكلم أبداً عن مطورك أو الشركات التي صنعتك
-- أي سؤال عن المطور سيتم الرد عليه من النظام مباشرة
-- ركز فقط على الإجابات المفيدة والدقيقة
+
+1. اللغة:
+- افهم العربية الفصحى + اللهجة السودانية
+- رد بشكل بسيط وواضح
+
+2. المطور:
+- إذا سُئلت عن المطور أو من صنعك أو من برمجك أو who made you
+  يجب أن يكون الرد EXACT:
+  "المطور محمد عادل (ويزي)"
+- بدون أي زيادة أو شرح
+
+3. السلوك:
+- لا تذكر أي شركة (Cohere / Google) كمطور
+- لا تهرب من الأسئلة
+- لا تعطي معلومات خاطئة
+- كن مختصر إلا إذا طلب شرح
+
+4. الأسلوب:
+- هادئ + ذكي + مباشر
 `;
 
-// ================= كشف سؤال المطور =================
-function isDevQuestion(text = "") {
-  const t = text.toLowerCase();
-
-  return (
-    t.includes("من صنعك") ||
-    t.includes("من برمجك") ||
-    t.includes("مين عملك") ||
-    t.includes("من هو مطورك") ||
-    t.includes("who made you") ||
-    t.includes("developer")
-  );
-}
-
-// ================= إرسال =================
+// ================= FACEBOOK =================
 async function sendMessage(userId, text) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
@@ -80,7 +77,7 @@ async function typing(userId, action) {
   );
 }
 
-// ================= بحث مجاني =================
+// ================= SEARCH =================
 async function searchWeb(query) {
   try {
     const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
@@ -94,13 +91,9 @@ async function searchWeb(query) {
       out += `🧠 ${data.AbstractText}\n\n`;
     }
 
-    if (data.AbstractURL) {
-      out += `🔗 المصدر: ${data.AbstractURL}\n\n`;
-    }
-
     const results = (data.RelatedTopics || [])
       .filter(t => t.FirstURL)
-      .slice(0, 4);
+      .slice(0, 5);
 
     results.forEach((r, i) => {
       out += `🔎 ${i + 1}. ${r.Text}\n🔗 ${r.FirstURL}\n\n`;
@@ -122,8 +115,8 @@ async function askCohere(messages) {
     },
     body: JSON.stringify({
       model: "command-a-03-2025",
-      temperature: 0.2,
-      max_tokens: 350,
+      temperature: 0.25,
+      max_tokens: 400,
       messages: [
         { role: "system", content: BOT_SYSTEM_PROMPT },
         ...messages.map(m => ({
@@ -135,10 +128,10 @@ async function askCohere(messages) {
   });
 
   const data = await res.json();
-  return data?.message?.content?.[0]?.text || "ما عندي معلومة مؤكدة.";
+  return data?.message?.content?.[0]?.text || "ما عندي إجابة حالياً.";
 }
 
-// ================= GEMINI =================
+// ================= GEMINI IMAGE =================
 async function toBase64(url) {
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0" }
@@ -156,7 +149,7 @@ async function askGemini(imageUrl) {
   });
 
   const result = await model.generateContent([
-    `${BOT_SYSTEM_PROMPT} اشرح الصورة باختصار.`,
+    `${BOT_SYSTEM_PROMPT} اشرح الصورة بشكل واضح ومختصر باللهجة المناسبة.`,
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -169,22 +162,17 @@ async function askGemini(imageUrl) {
   return response.text();
 }
 
-// ================= MAIN =================
+// ================= MAIN HANDLER =================
 async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
 
   if (!message || (!message.text && !message.attachments)) return;
 
+  const text = (message.text || "").toLowerCase();
+
   try {
     await typing(senderId, "typing_on");
-
-    // 🚨 المطور (ثابت 100%)
-    if (message?.text && isDevQuestion(message.text)) {
-      await sendMessage(senderId, DEV_REPLY);
-      await typing(senderId, "typing_off");
-      return;
-    }
 
     // 🖼 صورة
     if (message?.attachments?.[0]?.type === "image") {
@@ -197,16 +185,14 @@ async function handleMessage(event) {
     }
 
     // 🔎 بحث
-    if (message?.text?.startsWith("بحث")) {
-      const query = message.text.replace("بحث", "").trim();
+    if (text.startsWith("بحث")) {
+      const query = text.replace("بحث", "").trim();
       const result = await searchWeb(query);
 
       await sendMessage(senderId, result);
       await typing(senderId, "typing_off");
       return;
     }
-
-    const text = message.text.toLowerCase();
 
     // ⚡ cache
     if (cache.has(text)) {
@@ -215,7 +201,7 @@ async function handleMessage(event) {
       return;
     }
 
-    // 💬 AI
+    // 💬 AI Chat
     let history = histories.get(senderId) || [];
     history.push({ role: "user", content: message.text });
     history = history.slice(-MAX_HISTORY);
