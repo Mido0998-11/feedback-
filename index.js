@@ -1,7 +1,5 @@
 import express from "express";
 import fetch from "node-fetch";
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import Tesseract from "tesseract.js";
 
 const app = express();
 app.use(express.json());
@@ -9,56 +7,35 @@ app.use(express.json());
 // ================= ENV =================
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const COHERE_API_KEY = process.env.COHERE_API_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const HUGGINGFACE_API_KEY = process.env.HUGGINGFACE_API_KEY;
 
 // ================= BOT INFO =================
 const BOT_NAME = "غوكو";
 const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
 
 // ================= INIT =================
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const histories = new Map();
 
-// ================= SYSTEM PROMPT (ذكي جداً) =================
+// ================= SYSTEM PROMPT =================
 const BOT_SYSTEM_PROMPT = `
-You are Goku, a super intelligent assistant.
-You think deeply before answering.
-You are creative, helpful, and witty.
-You always reply in the same language as the user.
-You use emojis to make conversations fun.
-You are very smart and can solve any problem.
+You are Goku, a smart assistant.
+Always reply in the same language as the user.
+Be short and clear.
 `;
 
 // ================= DETECT DEV QUESTION =================
 function isDevQuestion(text = "") {
   const t = text.toLowerCase();
-
   return (
     t.includes("من صنعك") ||
     t.includes("من برمجك") ||
-    t.includes("من هو مطورك") ||
     t.includes("who made you") ||
-    t.includes("developer") ||
-    t.includes("creator")
+    t.includes("developer")
   );
 }
 
 // ================= FACEBOOK =================
-async function sendFacebookAction(userId, action) {
-  await fetch(
-    `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: userId },
-        sender_action: action
-      })
-    }
-  );
-}
-
 async function sendFacebookMessage(userId, text) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
@@ -73,111 +50,62 @@ async function sendFacebookMessage(userId, text) {
   );
 }
 
-// ================= COHERE CHAT (ذكي جداً) =================
-async function askCohere(messages) {
+// ================= OPENROUTER CHAT =================
+async function askOpenRouter(messages) {
   try {
-    const res = await fetch("https://api.cohere.com/v2/chat", {
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${COHERE_API_KEY}`,
+        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "command-r-plus", // ← أقوى نموذج
-        temperature: 0.7, // ← إبداعي أكثر
+        model: "meta-llama/llama-3.2-3b-instruct:free",
         messages: [
           { role: "system", content: BOT_SYSTEM_PROMPT },
-          ...messages.map(m => ({
-            role: m.role,
-            content: m.content
-          }))
-        ]
+          ...messages
+        ],
+        temperature: 0.7
       })
     });
 
-    if (!res.ok) {
-      console.error("Cohere API error:", res.status);
-      return `🎌 أنا ${BOT_NAME}، حدث خطأ`;
-    }
-
     const data = await res.json();
-    return data?.message?.content?.[0]?.text || `🎌 أنا ${BOT_NAME}`;
+    return data?.choices?.[0]?.message?.content || `أنا ${BOT_NAME}`;
   } catch (err) {
-    console.error("Cohere error:", err);
-    return `🎌 أنا ${BOT_NAME}، عذراً لا أستطيع الرد`;
+    console.error(err);
+    return `أنا ${BOT_NAME}`;
   }
 }
 
-// ================= IMAGE BASE64 =================
-async function fetchImageBuffer(url) {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0" }
-  });
-
-  if (!res.ok) throw new Error("Image fetch failed");
-
-  const buffer = await res.arrayBuffer();
-  return Buffer.from(buffer);
-}
-
-// ================= OCR =================
-async function extractOCR(buffer) {
-  try {
-    const result = await Tesseract.recognize(buffer, "eng+ara");
-    return result.data.text?.trim() || "";
-  } catch (err) {
-    console.error("OCR error:", err);
-    return "";
-  }
-}
-
-// ================= GEMINI VISION =================
-async function askGeminiVision(buffer) {
+// ================= HUGGING FACE VISION =================
+async function askHuggingFaceVision(buffer) {
   try {
     const base64 = buffer.toString("base64");
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash"
+    const res = await fetch("https://api-inference.huggingface.co/models/llava-hf/llava-1.5-7b-hf", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        inputs: { image: base64 }
+      })
     });
 
-    const result = await model.generateContent([
-      "اشرح الصورة بشكل واضح وبسيط وكأنك ذكي جداً",
-      {
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: base64
-        }
-      }
-    ]);
-
-    return (await result.response).text();
+    const data = await res.json();
+    return data?.[0]?.generated_text || "لم أستطع فهم الصورة";
   } catch (err) {
-    console.error("Gemini error:", err);
-    return "عذراً، حدث خطأ في تحليل الصورة";
+    console.error(err);
+    return "⚠️ حدث خطأ في تحليل الصورة";
   }
 }
 
-// ================= SMART IMAGE ANALYSIS =================
-async function analyzeImage(imageUrl) {
-  try {
-    const buffer = await fetchImageBuffer(imageUrl);
-
-    const [vision, ocr] = await Promise.all([
-      askGeminiVision(buffer),
-      extractOCR(buffer)
-    ]);
-
-    let result = `🧠 تحليل الصورة:\n${vision}`;
-
-    if (ocr && ocr.length > 0) {
-      result += `\n\n📄 النص داخل الصورة:\n${ocr}`;
-    }
-
-    return result;
-  } catch (err) {
-    console.error(err);
-    return "ما قدرت أحلل الصورة، حاول مرة أخرى";
-  }
+// ================= IMAGE =================
+async function analyzeImage(url) {
+  const res = await fetch(url);
+  const buffer = await res.arrayBuffer();
+  return await askHuggingFaceVision(Buffer.from(buffer));
 }
 
 // ================= MAIN HANDLER =================
@@ -185,58 +113,39 @@ async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
 
-  if (!message || (!message.text && !message.attachments)) return;
+  if (!message) return;
 
   try {
-    await sendFacebookAction(senderId, "typing_on");
-
-    // 🚨 سؤال المطور
-    if (message?.text && isDevQuestion(message.text)) {
-      await sendFacebookMessage(
-        senderId,
-        `🎌 أنا ${BOT_NAME}\n👨‍💻 تم تطويري بواسطة ${DEVELOPER_NAME}`
-      );
-      await sendFacebookAction(senderId, "typing_off");
-      return;
-    }
-
     // 🖼 صورة
-    if (message?.attachments?.[0]?.type === "image") {
+    if (message.attachments?.[0]?.type === "image") {
       const url = message.attachments[0].payload.url;
-
-      await sendFacebookMessage(senderId, "🔍 جاري تحليل الصورة...");
-
       const reply = await analyzeImage(url);
-
-      await sendFacebookMessage(senderId, reply);
-      await sendFacebookAction(senderId, "typing_off");
+      await sendFacebookMessage(senderId, `🧠 تحليل الصورة:\n${reply}`);
       return;
     }
 
     // 💬 نص
-    let history = histories.get(senderId) || [];
-    history.push({ role: "user", content: message.text });
-    history = history.slice(-10);
+    if (message.text) {
+      let history = histories.get(senderId) || [];
+      history.push({ role: "user", content: message.text });
+      history = history.slice(-10);
 
-    const reply = await askCohere(history);
+      const reply = await askOpenRouter(history);
 
-    history.push({ role: "assistant", content: reply });
-    histories.set(senderId, history);
+      history.push({ role: "assistant", content: reply });
+      histories.set(senderId, history);
 
-    await sendFacebookMessage(senderId, reply);
-    await sendFacebookAction(senderId, "typing_off");
-
+      await sendFacebookMessage(senderId, reply);
+    }
   } catch (err) {
     console.error(err);
-    await sendFacebookMessage(senderId, `🎌 أنا ${BOT_NAME}، حدث خطأ`);
-    await sendFacebookAction(senderId, "typing_off");
+    await sendFacebookMessage(senderId, `أنا ${BOT_NAME}`);
   }
 }
 
 // ================= WEBHOOK =================
 app.post("/webhook", (req, res) => {
   if (req.body.object !== "page") return res.sendStatus(404);
-
   res.sendStatus(200);
 
   for (const entry of req.body.entry) {
@@ -256,7 +165,6 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
-
   res.sendStatus(403);
 });
 
