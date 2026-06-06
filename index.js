@@ -17,8 +17,19 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // ================= MEMORY =================
 const histories = new Map();
 
+// التوجيه الصحيح والمعدل: البوت يعرف تماماً إنك إنت المطور وصانعه الوحيد
+const BOT_SYSTEM_PROMPT = "أنت مساعد ذكي ومرح، تجيب باختصار ووضوح وبلهجة سودانية ودية. تذكر دائماً أن مطورك وصانعك هو (محمد عادل ويزي - Wizzy)، وإذا سألك أي مستخدم عن من قام ببرمجتك أو تطويرك، أخبره فخوراً بأن مطورك هو محمد عادل ويزي.";
+
 // ================= COHERE (TEXT) =================
 async function askCohere(messages) {
+  const formattedMessages = [
+    { role: "system", content: [{ type: "text", text: BOT_SYSTEM_PROMPT }] },
+    ...messages.map(m => ({
+      role: m.role,
+      content: m.content
+    }))
+  ];
+
   const response = await fetch("https://api.cohere.com/v2/chat", {
     method: "POST",
     headers: {
@@ -27,11 +38,8 @@ async function askCohere(messages) {
     },
     body: JSON.stringify({
       model: "command-a-03-2025",
-      temperature: 0.3,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content
-      }))
+      temperature: 0.5,
+      messages: formattedMessages
     })
   });
 
@@ -40,11 +48,7 @@ async function askCohere(messages) {
   }
 
   const data = await response.json();
-
-  return (
-    data?.message?.content?.[0]?.text ||
-    "عذراً، لم أستطع الرد."
-  );
+  return data?.message?.content?.[0]?.text || "عذراً، لم أستطع الرد.";
 }
 
 // ================= GEMINI (IMAGE) =================
@@ -58,11 +62,11 @@ async function askGemini(imageUrl) {
   const base64 = await toBase64(imageUrl);
 
   const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash"
+    model: "gemini-1.5-flash" 
   });
 
   const result = await model.generateContent([
-    "اشرح الصورة بالعربي بشكل واضح ومختصر",
+    `${BOT_SYSTEM_PROMPT} اشرح هذه الصورة بالعامية السودانية وبشكل واضح ومختصر جداً.`,
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -72,18 +76,33 @@ async function askGemini(imageUrl) {
   ]);
 
   const response = await result.response;
-  return response.text() || "ما قدرت أفهم الصورة.";
+  return response.text() || "ما قدرت أفهم الصورة دي والله.";
 }
 
-// ================= FACEBOOK SEND =================
+// ================= FACEBOOK ACTIONS & SEND =================
+
+// دالة تفعيل الأكشن (يكتب الآن...)
+async function sendFacebookAction(userId, action) {
+  await fetch(
+    `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        sender_action: action
+      })
+    }
+  );
+}
+
+// دالة إرسال الرسالة النصية
 async function sendFacebookMessage(userId, text) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         recipient: { id: userId },
         message: { text }
@@ -106,70 +125,73 @@ app.get("/webhook", (req, res) => {
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
-
   return res.sendStatus(403);
 });
 
-// ================= MAIN BOT LOGIC =================
-app.post("/webhook", async (req, res) => {
-  try {
-    const body = req.body;
+// ================= BACKGROUND PROCESSOR =================
+async function handleMessageBackground(event) {
+  const senderId = event.sender.id;
+  const message = event.message;
+  let reply = "";
 
-    if (body.object !== "page") {
-      return res.sendStatus(404);
+  try {
+    // تشغيل ميزة "يكتب الآن..." أول ما نستلم الرسالة
+    await sendFacebookAction(senderId, "typing_on");
+
+    // 1. معالجة الصور عبر Gemini
+    if (message?.attachments?.[0]?.type === "image") {
+      const imageUrl = message.attachments[0].payload.url;
+      reply = await askGemini(imageUrl);
+    }
+    // 2. معالجة النصوص عبر Cohere
+    else if (message?.text) {
+      let history = histories.get(senderId) || [];
+      history.push({ role: "user", content: message.text });
+      history = history.slice(-20);
+
+      reply = await askCohere(history);
+
+      history.push({ role: "assistant", content: reply });
+      histories.set(senderId, history);
     }
 
-    for (const entry of body.entry) {
-      for (const event of entry.messaging) {
-        const senderId = event.sender.id;
-        const message = event.message;
+    // إيقاف ميزة الكتابة وإرسال الرد للمستخدم
+    await sendFacebookAction(senderId, "typing_off");
+    if (reply) {
+      await sendFacebookMessage(senderId, reply);
+    }
+  } catch (err) {
+    console.error("BACKGROUND PROCESS ERROR:", err);
+    // إلغاء الـ Typing لو حصل خطأ عشان ما يعلق في الشات
+    await sendFacebookAction(senderId, "typing_off");
+  }
+}
 
-        let reply = "";
+// ================= MAIN BOT LOGIC =================
+app.post("/webhook", (req, res) => {
+  const body = req.body;
 
-        // ================= IMAGE =================
-        if (message?.attachments?.[0]?.type === "image") {
-          const imageUrl = message.attachments[0].payload.url;
+  if (body.object !== "page") {
+    return res.sendStatus(404);
+  }
 
-          reply = await askGemini(imageUrl);
-        }
+  // الرد السريع لفيسبوك عشان الـ Timeout
+  res.status(200).send("EVENT_RECEIVED");
 
-        // ================= TEXT =================
-        else if (message?.text) {
-          let history = histories.get(senderId) || [];
+  for (const entry of body.entry) {
+    for (const event of entry.messaging) {
+      // حماية من الـ Echo لو البوت بيرد على نفسه
+      if (event.message?.is_echo) continue;
 
-          history.push({
-            role: "user",
-            content: message.text
-          });
-
-          history = history.slice(-20);
-
-          reply = await askCohere(history);
-
-          history.push({
-            role: "assistant",
-            content: reply
-          });
-
-          histories.set(senderId, history);
-        }
-
-        if (reply) {
-          await sendFacebookMessage(senderId, reply);
-        }
+      if (event.message?.text || event.message?.attachments) {
+        handleMessageBackground(event);
       }
     }
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error("BOT ERROR:", err);
-    res.sendStatus(500);
   }
 });
 
 // ================= START SERVER =================
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
