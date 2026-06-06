@@ -11,52 +11,41 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const COHERE_API_KEY = process.env.COHERE_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-// ================= INIT =================
+// ================= BOT =================
+const BOT_NAME = "غوكو";
+
+// ================= INIT GEMINI =================
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // ================= MEMORY =================
 const histories = new Map();
-const cache = new Map();
-const MAX_HISTORY = 10;
 
-// ================= BOT =================
-const BOT_NAME = "غوكو";
+// ================= SYSTEM PROMPT =================
+const BOT_SYSTEM_PROMPT = `
+أنت مساعد ذكي ومرح اسمه غوكو.
 
-// ================= المطور الثابت =================
-const DEV_REPLY = "المطور محمد عادل (ويزي)";
+قواعد:
+- مطورك هو محمد عادل
+- لا تذكر أي شركة كمطور
+- كن مختصر وواضح
+`;
 
-// ================= كشف المطور (قوي جداً) =================
+// ================= DEV CHECK =================
 function isDevQuestion(text = "") {
   const t = text.toLowerCase();
 
   return (
     t.includes("من صنعك") ||
     t.includes("من برمجك") ||
-    t.includes("مين عملك") ||
     t.includes("من هو مطورك") ||
     t.includes("who made you") ||
     t.includes("developer") ||
-    t.includes("creator") ||
-    t.includes("صانعك")
+    t.includes("creator")
   );
 }
 
-// ================= إرسال =================
-async function sendMessage(userId, text) {
-  await fetch(
-    `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        recipient: { id: userId },
-        message: { text }
-      })
-    }
-  );
-}
-
-async function typing(userId, action) {
+// ================= FACEBOOK =================
+async function sendFacebookAction(userId, action) {
   await fetch(
     `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
     {
@@ -70,32 +59,18 @@ async function typing(userId, action) {
   );
 }
 
-// ================= SEARCH =================
-async function searchWeb(query) {
-  try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`;
-
-    const res = await fetch(url);
-    const data = await res.json();
-
-    let out = "🔍 نتائج البحث:\n\n";
-
-    if (data.AbstractText) {
-      out += `🧠 ${data.AbstractText}\n\n`;
+async function sendFacebookMessage(userId, text) {
+  await fetch(
+    `https://graph.facebook.com/v23.0/me/messages?access_token=${PAGE_ACCESS_TOKEN}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: { text }
+      })
     }
-
-    const results = (data.RelatedTopics || [])
-      .filter(t => t.FirstURL)
-      .slice(0, 4);
-
-    results.forEach((r, i) => {
-      out += `🔎 ${i + 1}. ${r.Text}\n🔗 ${r.FirstURL}\n\n`;
-    });
-
-    return out.trim() || "ما لقيت نتائج واضحة.";
-  } catch {
-    return "حصل خطأ في البحث حالياً.";
-  }
+  );
 }
 
 // ================= COHERE =================
@@ -108,20 +83,22 @@ async function askCohere(messages) {
     },
     body: JSON.stringify({
       model: "command-a-03-2025",
-      temperature: 0.2,
-      max_tokens: 350,
-      messages: messages.map(m => ({
-        role: m.role,
-        content: m.content
-      }))
+      temperature: 0.4,
+      messages: [
+        { role: "system", content: BOT_SYSTEM_PROMPT },
+        ...messages.map(m => ({
+          role: m.role,
+          content: m.content
+        }))
+      ]
     })
   });
 
   const data = await res.json();
-  return data?.message?.content?.[0]?.text || "ما عندي إجابة.";
+  return data?.message?.content?.[0]?.text || "ما قدرت أرد حالياً.";
 }
 
-// ================= GEMINI =================
+// ================= GEMINI IMAGE =================
 async function toBase64(url) {
   const res = await fetch(url);
   const buffer = await res.arrayBuffer();
@@ -136,7 +113,7 @@ async function askGemini(imageUrl) {
   });
 
   const result = await model.generateContent([
-    "اشرح الصورة باختصار",
+    "اشرح الصورة باختصار وبوضوح",
     {
       inlineData: {
         mimeType: "image/jpeg",
@@ -149,7 +126,7 @@ async function askGemini(imageUrl) {
   return response.text();
 }
 
-// ================= MAIN =================
+// ================= MAIN HANDLER =================
 async function handleMessage(event) {
   const senderId = event.sender.id;
   const message = event.message;
@@ -159,12 +136,12 @@ async function handleMessage(event) {
   const text = (message.text || "").toLowerCase();
 
   try {
-    await typing(senderId, "typing_on");
+    await sendFacebookAction(senderId, "typing_on");
 
-    // 🚨 المطور (NO AI)
+    // 🚨 المطور (ثابت 100%)
     if (message?.text && isDevQuestion(message.text)) {
-      await sendMessage(senderId, DEV_REPLY);
-      await typing(senderId, "typing_off");
+      await sendFacebookMessage(senderId, "المطور محمد عادل");
+      await sendFacebookAction(senderId, "typing_off");
       return;
     }
 
@@ -173,46 +150,27 @@ async function handleMessage(event) {
       const url = message.attachments[0].payload.url;
       const reply = await askGemini(url);
 
-      await sendMessage(senderId, reply);
-      await typing(senderId, "typing_off");
+      await sendFacebookMessage(senderId, reply);
+      await sendFacebookAction(senderId, "typing_off");
       return;
     }
 
-    // 🔎 بحث
-    if (text.startsWith("بحث")) {
-      const query = text.replace("بحث", "").trim();
-      const result = await searchWeb(query);
-
-      await sendMessage(senderId, result);
-      await typing(senderId, "typing_off");
-      return;
-    }
-
-    // ⚡ cache
-    if (cache.has(text)) {
-      await sendMessage(senderId, cache.get(text));
-      await typing(senderId, "typing_off");
-      return;
-    }
-
-    // 💬 AI chat
+    // 💬 AI Chat
     let history = histories.get(senderId) || [];
     history.push({ role: "user", content: message.text });
-    history = history.slice(-MAX_HISTORY);
+    history = history.slice(-10);
 
     const reply = await askCohere(history);
 
     history.push({ role: "assistant", content: reply });
     histories.set(senderId, history);
 
-    cache.set(text, reply);
-
-    await sendMessage(senderId, reply);
-    await typing(senderId, "typing_off");
+    await sendFacebookMessage(senderId, reply);
+    await sendFacebookAction(senderId, "typing_off");
 
   } catch (err) {
     console.error(err);
-    await typing(senderId, "typing_off");
+    await sendFacebookAction(senderId, "typing_off");
   }
 }
 
@@ -225,7 +183,7 @@ app.post("/webhook", (req, res) => {
   for (const entry of req.body.entry) {
     for (const event of entry.messaging) {
       if (event.message?.is_echo) continue;
-      setImmediate(() => handleMessage(event));
+      handleMessage(event);
     }
   }
 });
@@ -244,6 +202,7 @@ app.get("/webhook", (req, res) => {
 });
 
 // ================= START =================
-app.listen(process.env.PORT || 3000, () => {
-  console.log(`🤖 ${BOT_NAME} running...`);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🤖 ${BOT_NAME} running`);
 });
