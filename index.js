@@ -13,12 +13,12 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({
   model: "gemini-3.6-flash",
   systemInstruction: `
-أنت "غوكو" (Goku)، المساعد الذكي الخارق ذو الطاقة العالية والذكاء الفائق!
-- مطورك، مبرمجك، وصانعك الوحيد هو المهندس العبقري: "محمد عادل ويزي (Wizzy)".
-- إذا سألك أي شخص عن مطورك أو عن كيفية برمجتك وتطويرك، أجب بفخر واعتزاز وتفصيل ذكي: وضح أنك بُنيت بواسطة محمد عادل ويزي باستخدام تقنيات Node.js وExpress وواجهات برمجة التطبيقات لـ Gemini وFacebook Graph API، ومستضاف بسلاسة على سحابة Render.
-- أسلوبك: ودود، متفائل، مليء بالطاقة والحماس وروح التحدي، ومساعد ذكي جداً ودقيق.
-- تجيب دائماً بنفس لغة ولهجة المستخدم (سوداني، فصحى، مصري، إنجليزي... إلخ).
-- قادر على تحليل الصور وفهم تفاصيلها وشرحها ببراعة تامة.
+أنت مساعد ذكاء اصطناعي ذكي، هادئ، محترف، ومتزن اسمه "غوكو".
+- قدم إجابات دقيقة، واضحة ومباشرة دون مبالغة أو حماس زائد.
+- أجب دائماً بنفس لغة ولهجة المستخدم (فصحى، عامية، إنجليزي... إلخ).
+- معلومة المطور: تم تطويرك وبرمجتك بواسطة "محمد عادل ويزي (Wizzy)".
+- قاعدة هامة جداً: لا تذكر مطورك أو اسم محمد عادل نهائياً إلا إذا سألك المستخدم صراحة عن من صنعك، برمجك، طورك أو من هو صاحبك. في غير ذلك، ركز على الإجابة عن طلب المستخدم فقط.
+- لديك القدرة على قراءة وتحليل وفهم الصور المرفقة بدقة.
 `
 });
 
@@ -27,11 +27,11 @@ const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
 
 const histories = new Map();
 
+// ردود هادئة ومحددة فقط عند السؤال عن المطور
 const DEV_RESPONSES = [
-  `أنا ${BOT_NAME} 🥋! صممني وبرمج طاقتي التقنية بالكامل المطور الفذ: ${DEVELOPER_NAME} باستخدام Node.js والذكاء الاصطناعي 🔥!`,
-  `أهلاً بك! لقد قام بهندستي وبرمجتي البطل ${DEVELOPER_NAME} ⚡، وهو من بنى خوارزمياتي وربطني بخوادم فيسبوك وسحابة الذكاء الاصطناعي!`,
-  `صانعي ومطوري الوحيد هو ${DEVELOPER_NAME} 🚀! سهر على كودي وتطويري خطوة بخطوة لأكون رفيقكم الذكي!`,
-  `تحياتي! أنا المساعد الذكي ${BOT_NAME}، وكل الفضل في هندستي البرمجية يعود لمطوري المبدع ${DEVELOPER_NAME} ✨`
+  `أنا ${BOT_NAME}، مساعد ذكاء اصطناعي تم تطويري وبرمجتي بواسطة ${DEVELOPER_NAME}.`,
+  `تمت برمجتي وتطوير هذا النظام بالكامل بواسطة المطور ${DEVELOPER_NAME}.`,
+  `صانعي ومطوري هو ${DEVELOPER_NAME}.`
 ];
 
 function isDevQuestion(text = "") {
@@ -48,11 +48,9 @@ function isDevQuestion(text = "") {
     t.includes("مين سواك") ||
     t.includes("مين مطورك") ||
     t.includes("من صانعك") ||
-    t.includes("برمجتك") ||
     t.includes("who made you") ||
     t.includes("who is your developer") ||
-    t.includes("developer") ||
-    t.includes("creator")
+    t.includes("who developed you")
   );
 }
 
@@ -61,7 +59,6 @@ function getRandomDevResponse() {
   return DEV_RESPONSES[index];
 }
 
-// دالة تحويل رابط الصورة إلى صيغة يفهمها Gemini
 async function urlToGenerativePart(url) {
   const response = await fetch(url);
   const buffer = await response.buffer();
@@ -76,17 +73,17 @@ async function urlToGenerativePart(url) {
 
 async function askGemini(messages, imagePart = null) {
   const prompt = messages
-    .map(m => `${m.role === "user" ? "المستخدم" : "غوكو"}: ${m.content}`)
+    .map(m => `${m.role === "user" ? "المستخدم" : "المساعد"}: ${m.content}`)
     .join("\n");
 
-  const fullPrompt = `${prompt}\nغوكو:`;
+  const fullPrompt = `${prompt}\nالمساعد:`;
 
   const contents = imagePart ? [imagePart, fullPrompt] : fullPrompt;
 
   const result = await model.generateContent(contents);
   const response = await result.response;
 
-  return response.text() || "عذراً يا صديقي، طاقتي استُهلكت ولم أتمكن من الرد، جرب مجدداً!";
+  return response.text() || "عذراً، لم أتمكن من معالجة الرد حالياً.";
 }
 
 async function sendFacebookAction(userId, action) {
@@ -131,7 +128,6 @@ async function handleMessage(event) {
 
   if (!message) return;
 
-  // فحص ما إذا كانت الرسالة تحتوي على صورة
   let imageUrl = null;
   if (message.attachments && message.attachments.length > 0) {
     const imgAttachment = message.attachments.find(att => att.type === "image");
@@ -140,34 +136,34 @@ async function handleMessage(event) {
     }
   }
 
-  const userText = (message.text || (imageUrl ? "صف أو حلل هذه الصورة" : "")).trim();
+  const userText = (message.text || (imageUrl ? "حلل هذه الصورة واشرح محتواها." : "")).trim();
   if (!userText && !imageUrl) return;
 
   try {
     await sendFacebookAction(senderId, "typing_on");
 
-    // أوامر المساعدة ومسح الذاكرة
-    if (userText.toLowerCase() === "/help" || userText === "مساعدة") {
-      const helpMsg = `أهلاً بك مع ${BOT_NAME} 🥋⚡!
-أنا هنا لمساعدتك في أي سؤال، تحليل الصور، أو المحادثة الذكية.
+    // أمر مسح الذاكرة
+    if (userText.toLowerCase() === "/clear" || userText === "مسح" || userText === "تصفير") {
+      histories.delete(senderId);
+      await sendFacebookMessage(senderId, "تم مسح سياق المحادثة بنجاح. تفضل، كيف يمكنني مساعدتك؟");
+      await sendFacebookAction(senderId, "typing_off");
+      return;
+    }
 
-💡 مميزاتي:
-• أستطيع قراءة وتحليل أي صورة ترسلها لي!
-• اكتب "مسح" أو "/clear" لبدء محادثة جديدة.
-• اسألني عن مطوري أو طريقة برمجتي لتعرف تفاصيل قوتي التقنية!`;
+    // أمر المساعدة
+    if (userText.toLowerCase() === "/help" || userText === "مساعدة") {
+      const helpMsg = `أهلاً بك، أنا ${BOT_NAME}، مساعدك الذكي.
+يمكنني مساعدتك في الإجابة عن الأسئلة، كتابة النصوص، وتحليل الصور.
+
+أوامر سريعة:
+• أرسل أي صورة مع سؤالك لتحليلها مباشرة.
+• اكتب "مسح" أو "/clear" لبدء محادثة جديدة وتصفير الذاكرة.`;
       await sendFacebookMessage(senderId, helpMsg);
       await sendFacebookAction(senderId, "typing_off");
       return;
     }
 
-    if (userText.toLowerCase() === "/clear" || userText === "مسح" || userText === "تصفير") {
-      histories.delete(senderId);
-      await sendFacebookMessage(senderId, "تم تصفير الذاكرة بنجاح 🔄! كيف يمكنني مساعدتك الآن يا بطل؟");
-      await sendFacebookAction(senderId, "typing_off");
-      return;
-    }
-
-    // الرد المباشر عند السؤال عن المطور (بدون صورة)
+    // السؤال عن المطور (فقط عند السؤال الصريح وبدون صورة)
     if (isDevQuestion(userText) && !imageUrl) {
       await sendFacebookMessage(senderId, getRandomDevResponse());
       await sendFacebookAction(senderId, "typing_off");
@@ -205,7 +201,7 @@ async function handleMessage(event) {
 
     await sendFacebookMessage(
       senderId,
-      "حدث خطأ مؤقت في طاقتي ⚡، حاول مجدداً بعد لحظات."
+      "حدث خطأ مؤقت، يرجى المحاولة مرة أخرى لاحقاً."
     );
 
     await sendFacebookAction(senderId, "typing_off");
@@ -213,7 +209,7 @@ async function handleMessage(event) {
 }
 
 app.get("/", (req, res) => {
-  res.send("Goku Bot Running Successfully!");
+  res.send("Goku Bot Running Successfully");
 });
 
 app.get("/webhook", (req, res) => {
