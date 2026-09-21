@@ -1,6 +1,6 @@
 import express from "express";
 import fetch from "node-fetch";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
 app.use(express.json());
@@ -9,9 +9,8 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-const ai = new GoogleGenAI({
-  apiKey: GEMINI_API_KEY
-});
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
 const BOT_NAME = "غوكو";
 const DEVELOPER_NAME = "محمد عادل ويزي (Wizzy)";
@@ -37,18 +36,18 @@ async function askGemini(messages) {
     .map(m => `${m.role}: ${m.content}`)
     .join("\n");
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: `
+  const fullPrompt = `
 أنت مساعد ذكي اسمه غوكو.
 أجب بنفس لغة المستخدم.
 كن مفيداً ومختصراً.
 
 ${prompt}
-`
-  });
+`;
 
-  return response.text || "عذراً، لم أتمكن من الرد.";
+  const result = await model.generateContent(fullPrompt);
+  const response = await result.response;
+
+  return response.text() || "عذراً، لم أتمكن من الرد.";
 }
 
 async function sendFacebookAction(userId, action) {
