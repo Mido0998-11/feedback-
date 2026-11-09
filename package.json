@@ -1,18 +1,13 @@
 {
-  "name": "goku-ai",
+  "name": "goku-facebook-bot",
   "version": "2.0.0",
   "type": "module",
-  "description": "GOKU Advanced Facebook Messenger AI",
-  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": ">=22"
-  },
   "dependencies": {
-    "@google/genai": "^2.0.0",
-    "better-sqlite3": "^12.0.0",
-    "express": "^5.0.0"
+    "@google/generative-ai": "^0.24.1",
+    "express": "^4.21.2",
+    "node-fetch": "^3.3.2"
   }
 }
